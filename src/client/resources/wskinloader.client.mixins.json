@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.wupeng.wskinloader.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "AbstractClientPlayerEntityMixin",
+    "PlayerListEntryMixin",
+    "PlayerListHudMixin",
+    "PlayerSkinCacheEntryMixin",
+    "PlayerSkinProviderAccessor",
+    "PlayerSkinProviderMixin",
+    "SkullBlockEntityRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

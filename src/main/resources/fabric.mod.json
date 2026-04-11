@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "wskinloader",
+  "version": "${version}",
+  "name": "WSkinLoader",
+  "description": "皮肤加载补丁, 支持加载非正版源的皮肤",
+  "authors": ["wupeng"],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/wskinloader/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.wupeng.wskinloader.client.WskinloaderClient"
+    ],
+    "main": [
+      "com.wupeng.wskinloader.Wskinloader"
+    ],
+    "modmenu": [
+      "com.wupeng.wskinloader.client.config.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    "wskinloader.mixins.json",
+    {
+      "config": "wskinloader.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.5",
+    "fabric-api": "*",
+    "minecraft": "~26.1",
+    "java": ">=25",
+    "cloth-config": ">=26.0.0"
+  },
+  "recommends": {
+    "modmenu": "*"
+  }
+}
