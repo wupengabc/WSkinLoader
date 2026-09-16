@@ -17,6 +17,8 @@ public class MojangApiChecker {
     private static final String MOJANG_API = "https://api.mojang.com/users/profiles/minecraft/";
     private static final Gson GSON = new Gson();
     private static final Map<String, PlayerProfile> CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, Long> FAILURE_CACHE = new ConcurrentHashMap<>();
+    private static final long FAILURE_CACHE_DURATION = 30000L;
     
     public static class PlayerProfile {
         public final UUID uuid;
@@ -36,26 +38,39 @@ public class MojangApiChecker {
      * @return PlayerProfile 或 null（如果是离线玩家）
      */
     public static PlayerProfile getPlayerProfile(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        String cacheKey = playerName.toLowerCase(java.util.Locale.ROOT);
         // 先检查缓存
-        PlayerProfile cached = CACHE.get(playerName);
+        PlayerProfile cached = CACHE.get(cacheKey);
         if (cached != null) {
             return cached;
         }
+        Long failedAt = FAILURE_CACHE.get(cacheKey);
+        if (failedAt != null && System.currentTimeMillis() - failedAt < FAILURE_CACHE_DURATION) {
+            return null;
+        }
         
         try {
-            URL url = new URL(MOJANG_API + playerName);
+            URL url = new URL(MOJANG_API + java.net.URLEncoder.encode(playerName, StandardCharsets.UTF_8));
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(3000);
-            connection.setReadTimeout(3000);
-            
-            int responseCode = connection.getResponseCode();
-            
-            if (responseCode == 200) {
+            try {
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(3000);
+                connection.setReadTimeout(3000);
+                int responseCode = connection.getResponseCode();
+
+                if (responseCode == 200) {
                 // 正版玩家，解析 UUID
-                String response = new String(connection.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                String response;
+                try (var stream = connection.getInputStream()) {
+                    response = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                }
                 JsonObject json = GSON.fromJson(response, JsonObject.class);
-                
+                if (json == null || !json.has("id") || !json.has("name")) {
+                    throw new IllegalArgumentException("Mojang API 返回了无效 JSON");
+                }
                 String uuidString = json.get("id").getAsString();
                 String name = json.get("name").getAsString();
                 
@@ -63,21 +78,28 @@ public class MojangApiChecker {
                 UUID uuid = parseUUID(uuidString);
                 
                 PlayerProfile profile = new PlayerProfile(uuid, name, true);
-                CACHE.put(playerName, profile);
+                CACHE.put(cacheKey, profile);
                 return profile;
             } else if (responseCode == 404) {
                 // 离线玩家
                 PlayerProfile profile = new PlayerProfile(null, playerName, false);
-                CACHE.put(playerName, profile);
+                CACHE.put(cacheKey, profile);
                 return profile;
             } else {
                 LOGGER.warn("无法检查玩家 {} 的正版状态: HTTP {}", playerName, responseCode);
+                try (var errorStream = connection.getErrorStream()) {
+                    if (errorStream != null) errorStream.readAllBytes();
+                }
+                FAILURE_CACHE.put(cacheKey, System.currentTimeMillis());
                 return null;
+            }
+            } finally {
+                connection.disconnect();
             }
         } catch (Exception e) {
             LOGGER.warn("无法检查玩家 {} 的正版状态: {}", playerName, e.getMessage());
-            // 网络错误时假设为离线玩家
-            return new PlayerProfile(null, playerName, false);
+            FAILURE_CACHE.put(cacheKey, System.currentTimeMillis());
+            return null;
         }
     }
     
@@ -109,5 +131,6 @@ public class MojangApiChecker {
     
     public static void clearCache() {
         CACHE.clear();
+        FAILURE_CACHE.clear();
     }
 }

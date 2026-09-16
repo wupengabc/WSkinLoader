@@ -26,6 +26,11 @@ public class PlayerNameCache {
     public static String getName(UUID uuid) {
         return UUID_TO_NAME.get(uuid);
     }
+
+    /** Snapshot of all known uuid to name mappings, used when reloading every player. */
+    public static Map<UUID, String> snapshot() {
+        return new java.util.HashMap<>(UUID_TO_NAME);
+    }
     
     /**
      * 移除指定玩家的名称缓存

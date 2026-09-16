@@ -24,7 +24,7 @@ public abstract class LivingEntityRendererMixin<T extends Entity, S extends Enti
     private static boolean debugLogged = false;
     
     @Inject(
-        method = "extractRenderState(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/entity/state/EntityRenderState;F)V",
+        method = "extractRenderState",
         at = @At("TAIL")
     )
     private void onExtractRenderState(

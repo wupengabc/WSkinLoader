@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * 拦截 PlayerSkinRenderCache.RenderInfo，让物品栏中的头颅也能显示自定义皮肤
  */
-@Mixin(PlayerSkinRenderCache.RenderInfo.class)
+@Mixin(targets = "net.minecraft.client.renderer.PlayerSkinRenderCache$RenderInfo")
 public abstract class PlayerSkinCacheEntryMixin {
     
     @Shadow @Final private GameProfile gameProfile;
@@ -52,6 +52,9 @@ public abstract class PlayerSkinCacheEntryMixin {
         
         if (customSkin != null || customCape != null) {
             PlayerSkin original = cir.getReturnValue();
+            if (original == null) {
+                return;
+            }
             cir.setReturnValue(new PlayerSkin(
                 customSkin != null ? customSkin : original.body(),
                 customCape != null ? customCape : original.cape(),

@@ -8,7 +8,6 @@
   "contact": {},
   "license": "All-Rights-Reserved",
   "icon": "assets/wskinloader/icon.png",
-  "accessWidener": "wskinloader.accesswidener",
   "environment": "client",
   "entrypoints": {
     "client": [
@@ -29,9 +28,9 @@
     }
   ],
   "depends": {
-    "fabricloader": ">=0.18.5",
+    "fabricloader": ">=0.19.5",
     "fabric-api": "*",
-    "minecraft": "~26.2",
+    "minecraft": "~26.3",
     "java": ">=25"
   },
   "recommends": {

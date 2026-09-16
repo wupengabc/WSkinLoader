@@ -10,6 +10,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.nio.charset.StandardCharsets;
+import java.net.URLEncoder;
 
 public class CustomSkinLoader {
     
@@ -48,7 +50,8 @@ public class CustomSkinLoader {
         }
         
         ModConfig.ApiConfig api = apis.get(apiIndex);
-        String url = api.url.replace("%name%", playerName);
+        String url = buildUrl(api.url, playerName);
+        if (url == null) return CompletableFuture.completedFuture(null);
         
         return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
             .thenApply(result -> {
@@ -76,7 +79,8 @@ public class CustomSkinLoader {
         }
         
         ModConfig.ApiConfig api = apis.get(index);
-        String url = api.url.replace("%name%", playerName);
+        String url = buildUrl(api.url, playerName);
+        if (url == null) return CompletableFuture.completedFuture(null);
         
         return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
             .exceptionally(throwable -> null)
@@ -90,5 +94,10 @@ public class CustomSkinLoader {
                 }
                 return tryLoadFromApis(playerUuid, playerName, apis, index + 1, downloader, cachePath, textureId, type);
             });
+    }
+
+    private static String buildUrl(String template, String playerName) {
+        if (!ModConfig.isAllowedApiUrl(template)) return null;
+        return template.replace("%name%", URLEncoder.encode(playerName, StandardCharsets.UTF_8));
     }
 }

@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -83,6 +84,14 @@ public class ModConfig {
         // 描述："auto" = 自动检测, "slim" = 瘦模型, "wide" = 宽模型
         public String modelType = "auto";
 
+        // 皮肤映射来源玩家名
+        // 描述：非空时用该玩家的皮肤覆盖当前玩家（留空 = 使用自己的）
+        public String skinSourcePlayer = "";
+
+        // 披风映射来源玩家名
+        // 描述：非空时用该玩家的披风覆盖当前玩家（留空 = 使用自己的）
+        public String capeSourcePlayer = "";
+
         // 皮肤配置
         // 描述：该玩家的皮肤加载规则
         public TextureOverride skin = new TextureOverride();
@@ -98,6 +107,8 @@ public class ModConfig {
             PlayerOverride copy = new PlayerOverride();
             copy.skipPremiumCheck = this.skipPremiumCheck;
             copy.modelType = this.modelType;
+            copy.skinSourcePlayer = this.skinSourcePlayer;
+            copy.capeSourcePlayer = this.capeSourcePlayer;
             copy.skin = this.skin.deepCopy();
             copy.cape = this.cape.deepCopy();
             return copy;
@@ -111,8 +122,9 @@ public class ModConfig {
 
     public static class TextureOverride {
         // 是否使用自定义 API（false = 使用正版）
-        // 描述：关闭后将使用Mojang正版皮肤/披风
-        public boolean useCustomApi = true;
+        // 描述：默认关闭，优先使用 Mojang 正版皮肤/披风；
+        //       开启后才强制从自定义 API 获取
+        public boolean useCustomApi = false;
 
         // 使用哪个 API（索引，-1 表示使用所有 API 按顺序尝试）
         // 描述：指定使用第几个API（从0开始），-1表示按顺序尝试所有API直到成功
@@ -176,6 +188,14 @@ public class ModConfig {
          * @return null 表示合法；否则返回第一条错误描述。
          */
         public String validate() {
+            for (ApiConfig api : skinApis) {
+                String error = validateApi(api);
+                if (error != null) return error;
+            }
+            for (ApiConfig api : capeApis) {
+                String error = validateApi(api);
+                if (error != null) return error;
+            }
             for (Map.Entry<String, PlayerOverride> entry : playerOverrides.entrySet()) {
                 String name = entry.getKey();
                 if (name == null || name.isBlank()) {
@@ -185,6 +205,21 @@ public class ModConfig {
                 if (!override.isValid(skinApis.size(), capeApis.size())) {
                     return "玩家 \"" + name + "\" 的 API 索引超出范围";
                 }
+            }
+            return null;
+        }
+
+        private static String validateApi(ApiConfig api) {
+            if (api == null || api.url == null || api.url.isBlank()) return "API 地址不能为空";
+            try {
+                java.net.URI uri = java.net.URI.create(api.url.replace("%name%", "player"));
+                String scheme = uri.getScheme();
+                if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                    return "API 地址只允许使用 HTTP 或 HTTPS";
+                }
+                if (uri.getHost() == null) return "API 地址缺少有效主机名";
+            } catch (IllegalArgumentException e) {
+                return "API 地址格式无效";
             }
             return null;
         }
@@ -205,13 +240,22 @@ public class ModConfig {
     }
 
     public static ModConfig getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = load();
+        synchronized (ModConfig.class) {
+            if (INSTANCE == null) {
+                INSTANCE = loadInternal();
+            }
+            return INSTANCE;
         }
-        return INSTANCE;
     }
 
     public static ModConfig load() {
+        synchronized (ModConfig.class) {
+            INSTANCE = loadInternal();
+            return INSTANCE;
+        }
+    }
+
+    private static ModConfig loadInternal() {
         if (Files.exists(CONFIG_PATH)) {
             try {
                 String json = Files.readString(CONFIG_PATH);
@@ -221,6 +265,22 @@ public class ModConfig {
                     if (config.skinApis == null) config.skinApis = new ArrayList<>();
                     if (config.capeApis == null) config.capeApis = new ArrayList<>();
                     if (config.playerOverrides == null) config.playerOverrides = new HashMap<>();
+                    config.skinApis.removeIf(api -> api == null || api.url == null || api.url.isBlank());
+                    config.capeApis.removeIf(api -> api == null || api.url == null || api.url.isBlank());
+                    config.skinApis.forEach(api -> { if (api.alias == null) api.alias = "暂无别名"; });
+                    config.capeApis.forEach(api -> { if (api.alias == null) api.alias = "暂无别名"; });
+                    config.playerOverrides.entrySet().removeIf(entry -> entry.getKey() == null || entry.getValue() == null);
+                    for (PlayerOverride override : config.playerOverrides.values()) {
+                        if (override.skin == null) override.skin = new TextureOverride();
+                        if (override.cape == null) override.cape = new TextureOverride();
+                        if (!"auto".equals(override.modelType) && !"slim".equals(override.modelType) && !"wide".equals(override.modelType)) {
+                            override.modelType = "auto";
+                        }
+                        if (override.skinSourcePlayer == null) override.skinSourcePlayer = "";
+                        if (override.capeSourcePlayer == null) override.capeSourcePlayer = "";
+                        override.skinSourcePlayer = override.skinSourcePlayer.trim();
+                        override.capeSourcePlayer = override.capeSourcePlayer.trim();
+                    }
                     
                     // 迁移旧配置：将skinUrls/capeUrls转换为skinApis/capeApis
                     if (config.skinUrls != null && !config.skinUrls.isEmpty() && config.skinApis.isEmpty()) {
@@ -268,7 +328,9 @@ public class ModConfig {
         // 避免异步写入时游戏退出或后续保存被跳过导致的数据丢失
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
-            Files.writeString(CONFIG_PATH, json);
+            Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
+            Files.writeString(tempPath, json);
+            moveConfigFile(tempPath);
             LOGGER.info("[WSkinLoader] 配置已保存到 {}", CONFIG_PATH);
         } catch (IOException e) {
             LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
@@ -285,7 +347,9 @@ public class ModConfig {
         CompletableFuture.runAsync(() -> {
             try {
                 Files.createDirectories(CONFIG_PATH.getParent());
-                Files.writeString(CONFIG_PATH, json);
+                Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
+                Files.writeString(tempPath, json);
+                moveConfigFile(tempPath);
                 LOGGER.info("[WSkinLoader] 配置已异步保存到 {}", CONFIG_PATH);
             } catch (IOException e) {
                 LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
@@ -375,6 +439,26 @@ public class ModConfig {
         if (url.contains("blessing.skin")) return "Blessing Skin";
         if (url.contains("mojang.com") || url.contains("minecraft.net")) return "正版";
         return "暂无别名";
+    }
+
+    private static void moveConfigFile(Path tempPath) throws IOException {
+        try {
+            Files.move(tempPath, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(tempPath, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    public static boolean isAllowedApiUrl(String value) {
+        if (value == null || value.isBlank() || value.length() > 512) return false;
+        try {
+            java.net.URI uri = java.net.URI.create(value.replace("%name%", "player"));
+            String scheme = uri.getScheme();
+            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
     
     /**

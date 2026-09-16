@@ -1,10 +1,7 @@
 package com.wupeng.wskinloader.client.render;
 
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.systems.GpuDevice;
-import com.mojang.blaze3d.systems.GpuDeviceBackend;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.api.device.GpuDevice;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -36,11 +33,11 @@ public final class RenderBackendInfo {
             return Api.UNKNOWN;
         }
 
-        GpuDeviceBackend backend = device.backend;
-        if (backend instanceof GlDevice) {
+        String backendName = device.getDeviceInfo().backendName();
+        if ("OpenGL".equalsIgnoreCase(backendName)) {
             return Api.OPENGL;
         }
-        if (backend instanceof VulkanDevice) {
+        if ("Vulkan".equalsIgnoreCase(backendName)) {
             return Api.VULKAN;
         }
         return Api.UNKNOWN;

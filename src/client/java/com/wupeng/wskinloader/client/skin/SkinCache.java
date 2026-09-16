@@ -1,6 +1,7 @@
 package com.wupeng.wskinloader.client.skin;
 
 import net.minecraft.core.ClientAsset;
+import net.minecraft.world.entity.player.PlayerModelType;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -9,6 +10,18 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SkinCache {
     private static final Map<UUID, ClientAsset.Texture> SKIN_CACHE = new ConcurrentHashMap<>();
     private static final Map<UUID, ClientAsset.Texture> CAPE_CACHE = new ConcurrentHashMap<>();
+    /** 解析出的模型类型（用于玩家映射时跟随来源玩家的粗细模型）。 */
+    private static final Map<UUID, PlayerModelType> MODEL_CACHE = new ConcurrentHashMap<>();
+
+    public static void cacheModel(UUID uuid, PlayerModelType modelType) {
+        if (uuid != null && modelType != null) {
+            MODEL_CACHE.put(uuid, modelType);
+        }
+    }
+
+    public static PlayerModelType getModel(UUID uuid) {
+        return uuid == null ? null : MODEL_CACHE.get(uuid);
+    }
     
     public static void cacheSkin(UUID uuid, ClientAsset.Texture skinAsset) {
         if (skinAsset != null) {

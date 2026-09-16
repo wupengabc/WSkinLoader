@@ -36,6 +36,12 @@ public class SkinTextureHelper {
             ModConfig.PlayerOverride override = ModConfig.getInstance().getPlayerOverride(playerName);
             if (override != null && !"auto".equals(override.modelType)) {
                 modelType = "slim".equals(override.modelType) ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+            } else if (override != null && (hasText(override.skinSourcePlayer) || hasText(override.capeSourcePlayer))) {
+                // 玩家映射：跟随来源玩家解析出的模型类型
+                PlayerModelType sourceModel = SkinCache.getModel(uuid);
+                if (sourceModel != null) {
+                    modelType = sourceModel;
+                }
             }
         }
         
@@ -50,5 +56,9 @@ public class SkinTextureHelper {
             modelType,
             original.secure()
         );
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }
