@@ -8,11 +8,13 @@ import net.minecraft.resources.Identifier;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public class CustomSkinLoader {
     
     public static CompletableFuture<ClientAsset.Texture> loadCustomSkin(
+        UUID playerUuid,
         String playerName,
         SkinTextureDownloader downloader,
         Path cachePath,
@@ -20,16 +22,17 @@ public class CustomSkinLoader {
         MinecraftProfileTexture.Type type
     ) {
         ModConfig config = ModConfig.getInstance();
-        List<String> urls = type == MinecraftProfileTexture.Type.SKIN ? config.skinUrls : config.capeUrls;
+        List<ModConfig.ApiConfig> apis = type == MinecraftProfileTexture.Type.SKIN ? config.skinApis : config.capeApis;
         
-        if (urls.isEmpty()) {
+        if (apis.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
         
-        return tryLoadFromUrls(playerName, urls, 0, downloader, cachePath, textureId, type);
+        return tryLoadFromApis(playerUuid, playerName, apis, 0, downloader, cachePath, textureId, type);
     }
     
     public static CompletableFuture<ClientAsset.Texture> loadCustomSkinFromIndex(
+        UUID playerUuid,
         String playerName,
         SkinTextureDownloader downloader,
         Path cachePath,
@@ -38,40 +41,54 @@ public class CustomSkinLoader {
         int apiIndex
     ) {
         ModConfig config = ModConfig.getInstance();
-        List<String> urls = type == MinecraftProfileTexture.Type.SKIN ? config.skinUrls : config.capeUrls;
+        List<ModConfig.ApiConfig> apis = type == MinecraftProfileTexture.Type.SKIN ? config.skinApis : config.capeApis;
         
-        if (urls.isEmpty() || apiIndex < 0 || apiIndex >= urls.size()) {
+        if (apis.isEmpty() || apiIndex < 0 || apiIndex >= apis.size()) {
             return CompletableFuture.completedFuture(null);
         }
         
-        String url = urls.get(apiIndex).replace("%name%", playerName);
+        ModConfig.ApiConfig api = apis.get(apiIndex);
+        String url = api.url.replace("%name%", playerName);
         
         return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
+            .thenApply(result -> {
+                if (result != null && type == MinecraftProfileTexture.Type.SKIN) {
+                    // 记录皮肤来源
+                    PlayerSkinSourceCache.setSource(playerUuid, api.alias);
+                }
+                return result;
+            })
             .exceptionally(throwable -> null);
     }
     
-    private static CompletableFuture<ClientAsset.Texture> tryLoadFromUrls(
+    private static CompletableFuture<ClientAsset.Texture> tryLoadFromApis(
+        UUID playerUuid,
         String playerName,
-        List<String> urls,
+        List<ModConfig.ApiConfig> apis,
         int index,
         SkinTextureDownloader downloader,
         Path cachePath,
         Identifier textureId,
         MinecraftProfileTexture.Type type
     ) {
-        if (index >= urls.size()) {
+        if (index >= apis.size()) {
             return CompletableFuture.completedFuture(null);
         }
         
-        String url = urls.get(index).replace("%name%", playerName);
+        ModConfig.ApiConfig api = apis.get(index);
+        String url = api.url.replace("%name%", playerName);
         
         return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
             .exceptionally(throwable -> null)
             .thenCompose(result -> {
                 if (result != null) {
+                    if (type == MinecraftProfileTexture.Type.SKIN) {
+                        // 记录皮肤来源
+                        PlayerSkinSourceCache.setSource(playerUuid, api.alias);
+                    }
                     return CompletableFuture.completedFuture(result);
                 }
-                return tryLoadFromUrls(playerName, urls, index + 1, downloader, cachePath, textureId, type);
+                return tryLoadFromApis(playerUuid, playerName, apis, index + 1, downloader, cachePath, textureId, type);
             });
     }
 }

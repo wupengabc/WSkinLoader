@@ -1,1 +1,20 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE metadata
+.idea/
+.vscode/
+*.iml
+
+# Local test and tool state
+.jqwik-database
+.kiro/
+
+# Minecraft runtime data
 /run/
+
+# Local environment files
+.env
+.env.*

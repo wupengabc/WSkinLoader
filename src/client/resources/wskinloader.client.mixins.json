@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "AbstractClientPlayerEntityMixin",
+    "LivingEntityRendererMixin",
     "PlayerListEntryMixin",
     "PlayerListHudMixin",
     "PlayerSkinCacheEntryMixin",

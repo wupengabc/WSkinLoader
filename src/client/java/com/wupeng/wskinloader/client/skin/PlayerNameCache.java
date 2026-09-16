@@ -14,8 +14,24 @@ public class PlayerNameCache {
         }
     }
     
+    /**
+     * 缓存玩家名称
+     */
+    public static void cacheName(UUID uuid, String name) {
+        if (uuid != null && name != null) {
+            UUID_TO_NAME.put(uuid, name);
+        }
+    }
+    
     public static String getName(UUID uuid) {
         return UUID_TO_NAME.get(uuid);
+    }
+    
+    /**
+     * 移除指定玩家的名称缓存
+     */
+    public static void remove(UUID uuid) {
+        UUID_TO_NAME.remove(uuid);
     }
     
     public static void clear() {

@@ -1,7 +1,6 @@
 package com.wupeng.wskinloader.client.mixin;
 
 import com.wupeng.wskinloader.client.config.ModConfig;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,14 +19,14 @@ public abstract class PlayerListHudMixin {
         method = "extractRenderState",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/Minecraft;isLocalServer()Z"
+            target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;onlineMode()Z"
         )
     )
-    private boolean alwaysShowPlayerHeads(Minecraft instance) {
+    private boolean alwaysShowPlayerHeads(ClientPacketListener instance) {
         ModConfig config = ModConfig.getInstance();
         if (config.enableTabListHeads) {
             return true;
         }
-        return instance.isLocalServer();
+        return instance.onlineMode();
     }
 }

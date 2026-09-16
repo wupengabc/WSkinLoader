@@ -7,14 +7,14 @@ import org.slf4j.LoggerFactory;
 
 public class WskinloaderClient implements ClientModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("WSkinLoader");
-    
+
     @Override
     public void onInitializeClient() {
         LOGGER.info("WSkinLoader 初始化中...");
         
         // 加载配置
         ModConfig.load();
-        
+
         LOGGER.info("WSkinLoader 初始化完成！");
     }
 }

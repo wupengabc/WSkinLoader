@@ -43,16 +43,24 @@ public class SkinLoader {
                 CompletableFuture<Void> loadingFuture;
                 
                 if (override != null && override.skipPremiumCheck) {
+                    // 跳过正版检测，直接按 override 规则加载
                     loadingFuture = loadWithOverride(uuid, playerName, override, downloader);
-                } else {
+                } else if (override != null) {
+                    // 有 override 配置，检查正版状态后混合加载
                     MojangApiChecker.PlayerProfile playerProfile = MojangApiChecker.getPlayerProfile(playerName);
                     
                     if (playerProfile != null && playerProfile.isPremium && playerProfile.uuid != null) {
-                        if (override != null) {
-                            loadingFuture = loadMixed(uuid, playerProfile.uuid, playerName, override, downloader);
-                        } else {
-                            loadingFuture = loadPremiumSkins(uuid, playerProfile.uuid, playerName, downloader);
-                        }
+                        loadingFuture = loadMixed(uuid, playerProfile.uuid, playerName, override, downloader);
+                    } else {
+                        // 非正版但有 override，按 override 规则加载
+                        loadingFuture = loadWithOverride(uuid, playerName, override, downloader);
+                    }
+                } else {
+                    // 没有 override，按默认逻辑
+                    MojangApiChecker.PlayerProfile playerProfile = MojangApiChecker.getPlayerProfile(playerName);
+                    
+                    if (playerProfile != null && playerProfile.isPremium && playerProfile.uuid != null) {
+                        loadingFuture = loadPremiumSkins(uuid, playerProfile.uuid, playerName, downloader);
                     } else {
                         loadingFuture = loadCustomSkins(uuid, playerName, downloader);
                     }
@@ -106,7 +114,8 @@ public class SkinLoader {
         MojangSessionApi.ProfileTextures textures = MojangSessionApi.getProfileTextures(mojangUuid);
         
         if (textures == null) {
-            return CompletableFuture.completedFuture(null);
+            // Mojang API 无法获取纹理，尝试从自定义 API 加载
+            return loadCustomSkins(cacheUuid, playerName, downloader);
         }
         
         CompletableFuture<Void> skinFuture = CompletableFuture.completedFuture(null);
@@ -114,10 +123,16 @@ public class SkinLoader {
         
         if (textures.skinUrl != null) {
             skinFuture = loadPremiumTexture(cacheUuid, mojangUuid, textures.skinUrl, MinecraftProfileTexture.Type.SKIN, downloader);
+        } else {
+            // 正版没有皮肤，尝试从自定义 API 加载
+            skinFuture = loadCustomTexture(cacheUuid, playerName, MinecraftProfileTexture.Type.SKIN, -1, downloader);
         }
         
         if (textures.capeUrl != null) {
             capeFuture = loadPremiumTexture(cacheUuid, mojangUuid, textures.capeUrl, MinecraftProfileTexture.Type.CAPE, downloader);
+        } else {
+            // 正版没有披风，尝试从自定义 API 加载（这是关键修复！）
+            capeFuture = loadCustomTexture(cacheUuid, playerName, MinecraftProfileTexture.Type.CAPE, -1, downloader);
         }
         
         return CompletableFuture.allOf(skinFuture, capeFuture);
@@ -133,6 +148,8 @@ public class SkinLoader {
                 if (asset != null) {
                     if (type == MinecraftProfileTexture.Type.SKIN) {
                         SkinCache.cacheSkin(cacheUuid, asset);
+                        // 记录为正版皮肤
+                        PlayerSkinSourceCache.setSource(cacheUuid, "正版");
                     } else {
                         SkinCache.cacheCape(cacheUuid, asset);
                     }
@@ -148,9 +165,9 @@ public class SkinLoader {
         CompletableFuture<ClientAsset.Texture> future;
         
         if (apiIndex >= 0) {
-            future = CustomSkinLoader.loadCustomSkinFromIndex(playerName, downloader, cachePath, textureId, type, apiIndex);
+            future = CustomSkinLoader.loadCustomSkinFromIndex(uuid, playerName, downloader, cachePath, textureId, type, apiIndex);
         } else {
-            future = CustomSkinLoader.loadCustomSkin(playerName, downloader, cachePath, textureId, type);
+            future = CustomSkinLoader.loadCustomSkin(uuid, playerName, downloader, cachePath, textureId, type);
         }
         
         return future.thenAccept(asset -> {

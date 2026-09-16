@@ -1,7 +1,10 @@
 package com.wupeng.wskinloader.client.util;
 
+import com.wupeng.wskinloader.client.config.ModConfig;
+import com.wupeng.wskinloader.client.skin.PlayerNameCache;
 import com.wupeng.wskinloader.client.skin.SkinCache;
 import net.minecraft.core.ClientAsset;
+import net.minecraft.world.entity.player.PlayerModelType;
 import net.minecraft.world.entity.player.PlayerSkin;
 
 import java.util.UUID;
@@ -26,7 +29,17 @@ public class SkinTextureHelper {
         ClientAsset.Texture customSkin = SkinCache.getSkin(uuid);
         ClientAsset.Texture customCape = SkinCache.getCape(uuid);
         
-        if (customSkin == null && customCape == null) {
+        // 检查是否有模型类型覆盖
+        PlayerModelType modelType = original.model();
+        String playerName = PlayerNameCache.getName(uuid);
+        if (playerName != null) {
+            ModConfig.PlayerOverride override = ModConfig.getInstance().getPlayerOverride(playerName);
+            if (override != null && !"auto".equals(override.modelType)) {
+                modelType = "slim".equals(override.modelType) ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+            }
+        }
+        
+        if (customSkin == null && customCape == null && modelType == original.model()) {
             return null;
         }
         
@@ -34,7 +47,7 @@ public class SkinTextureHelper {
             customSkin != null ? customSkin : original.body(),
             customCape != null ? customCape : original.cape(),
             original.elytra(),
-            original.model(),
+            modelType,
             original.secure()
         );
     }
