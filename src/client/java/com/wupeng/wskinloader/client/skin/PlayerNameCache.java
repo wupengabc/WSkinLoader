@@ -9,8 +9,8 @@ public class PlayerNameCache {
     private static final Map<UUID, String> UUID_TO_NAME = new ConcurrentHashMap<>();
     
     public static void cache(GameProfile profile) {
-        if (profile != null && profile.id() != null && profile.name() != null) {
-            UUID_TO_NAME.put(profile.id(), profile.name());
+        if (profile != null && profile.getId() != null && profile.getName() != null) {
+            UUID_TO_NAME.put(profile.getId(), profile.getName());
         }
     }
     

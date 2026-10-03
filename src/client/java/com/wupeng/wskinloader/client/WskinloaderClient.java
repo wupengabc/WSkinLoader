@@ -3,11 +3,11 @@ package com.wupeng.wskinloader.client;
 import com.wupeng.wskinloader.client.command.WSkinCommand;
 import com.wupeng.wskinloader.client.config.ModConfig;
 import net.fabricmc.api.ClientModInitializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class WskinloaderClient implements ClientModInitializer {
-    public static final Logger LOGGER = LoggerFactory.getLogger("WSkinLoader");
+    public static final Logger LOGGER = LogManager.getLogger("WSkinLoader");
 
     @Override
     public void onInitializeClient() {

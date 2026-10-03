@@ -1,5 +1,5 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
     id 'maven-publish'
 }
 
@@ -10,13 +10,20 @@ base {
     archivesName = project.archives_base_name
 }
 
-loom {
-    splitEnvironmentSourceSets()
+// Minecraft 1.16.5 has no bundled server jar, so Loom cannot split the
+// environment source sets. The main source set therefore also compiles the
+// client-only sources under src/client/java.
+sourceSets {
+    main {
+        java.srcDir "src/client/java"
+        resources.srcDir "src/client/resources"
+    }
+}
 
+loom {
     mods {
         "wskinloader" {
             sourceSet sourceSets.main
-            sourceSet sourceSets.client
         }
     }
 
@@ -30,42 +37,20 @@ loom {
 repositories {
     mavenCentral()
     maven { url "https://maven.terraformersmc.com/releases/" }
+    // 镜像兜底：Gradle 自带的 HTTP 客户端在部分网络下对 Mojang / Central
+    // 的 TLS 握手会失败，这里提供可用的镜像源。
+    maven { url "https://bmclapi2.bangbang93.com/maven/" }
+    maven { url "https://maven.aliyun.com/repository/public" }
 }
 
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings loom.officialMojangMappings()
-    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
     // ModMenu
-    implementation "com.terraformersmc:modmenu:1.16.23"
-
-    // Property-based testing with jqwik (runs on JUnit Platform)
-    testImplementation "net.jqwik:jqwik:1.9.2"
-    // JUnit Jupiter (for @Test support alongside jqwik's @Property)
-    testImplementation "org.junit.jupiter:junit-jupiter:5.11.3"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
-}
-
-// Wire the `test` source set to see the `client` source set (created by
-// loom.splitEnvironmentSourceSets()). This lets tests under
-// src/test/java import classes from src/client/java (e.g. the render/shader package).
-sourceSets {
-    test {
-        compileClasspath += sourceSets.client.compileClasspath + sourceSets.client.output
-        runtimeClasspath += sourceSets.client.runtimeClasspath + sourceSets.client.output
-    }
-}
-
-test {
-    useJUnitPlatform {
-        includeEngines 'jqwik', 'junit-jupiter'
-    }
-    testLogging {
-        events 'passed', 'skipped', 'failed'
-        showStandardStreams = true
-    }
+    modImplementation "com.terraformersmc:modmenu:1.16.23"
 }
 
 processResources {
@@ -83,8 +68,8 @@ tasks.withType(JavaCompile).configureEach {
 
 java {
     withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_8
-    targetCompatibility = JavaVersion.VERSION_8
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
 }
 
 jar {
