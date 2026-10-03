@@ -28,20 +28,21 @@ public class SkinTextureHelper {
         
         ClientAsset.Texture customSkin = SkinCache.getSkin(uuid);
         ClientAsset.Texture customCape = SkinCache.getCape(uuid);
-        
-        // 检查是否有模型类型覆盖
+
+        // 模型类型优先级：显式覆盖 > 解析结果（正版元数据 / 自定义皮肤像素检测）> 原版
         PlayerModelType modelType = original.model();
         String playerName = PlayerNameCache.getName(uuid);
-        if (playerName != null) {
-            ModConfig.PlayerOverride override = ModConfig.getInstance().getPlayerOverride(playerName);
-            if (override != null && !"auto".equals(override.modelType)) {
-                modelType = "slim".equals(override.modelType) ? PlayerModelType.SLIM : PlayerModelType.WIDE;
-            } else if (override != null && (hasText(override.skinSourcePlayer) || hasText(override.capeSourcePlayer))) {
-                // 玩家映射：跟随来源玩家解析出的模型类型
-                PlayerModelType sourceModel = SkinCache.getModel(uuid);
-                if (sourceModel != null) {
-                    modelType = sourceModel;
-                }
+        ModConfig.PlayerOverride override = playerName != null
+                ? ModConfig.getInstance().getPlayerOverride(playerName)
+                : null;
+        if (override != null && !"auto".equals(override.modelType)) {
+            modelType = "slim".equals(override.modelType) ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+        } else {
+            // auto 模式：跟随来源玩家或自定义皮肤解析出的模型类型，
+            // 否则窄臂皮肤会套在宽臂模型上导致手臂贴图错位。
+            PlayerModelType resolved = SkinCache.getModel(uuid);
+            if (resolved != null) {
+                modelType = resolved;
             }
         }
         
@@ -56,9 +57,5 @@ public class SkinTextureHelper {
             modelType,
             original.secure()
         );
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 }

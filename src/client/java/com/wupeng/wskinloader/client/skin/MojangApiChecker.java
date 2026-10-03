@@ -53,7 +53,7 @@ public class MojangApiChecker {
         }
         
         try {
-            URL url = new URL(MOJANG_API + java.net.URLEncoder.encode(playerName, StandardCharsets.UTF_8));
+            URL url = java.net.URI.create(MOJANG_API + java.net.URLEncoder.encode(playerName, StandardCharsets.UTF_8)).toURL();
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             try {
                 connection.setRequestMethod("GET");

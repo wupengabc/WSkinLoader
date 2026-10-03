@@ -27,8 +27,6 @@ import net.minecraft.network.chat.Component;
  * <p>Mapping is stored in the local player's player-override entry: an existing
  * entry is only updated, otherwise the entry is created automatically. Unrelated
  * fields of an existing entry are preserved.
- *
- * <p>Both {@code /wskin} and the alias {@code /skin} are registered.
  */
 public final class WSkinCommand {
 
@@ -38,7 +36,6 @@ public final class WSkinCommand {
     public static void register() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             registerRoot(dispatcher, "wskin");
-            registerRoot(dispatcher, "skin");
         });
     }
 

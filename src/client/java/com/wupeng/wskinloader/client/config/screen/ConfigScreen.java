@@ -290,7 +290,20 @@ public class ConfigScreen extends Screen {
                         .create(0, 0, CONTROL_WIDTH, BUTTON_HEIGHT, Component.empty(), (button, value) -> {
                             this.editData.enableTabListHeads = value;
                             this.markDirty();
+                            this.refreshContent();
                         }))));
+
+        if (this.editData.enableTabListHeads) {
+            list.addRow(new RowList.Row(
+                    Component.translatable("wskinloader.config.general.skip_duplicate_tab_head"),
+                    Component.translatable("wskinloader.config.general.skip_duplicate_tab_head.desc"),
+                    List.of(CycleButton.onOffBuilder(this.editData.skipDuplicateTabHead)
+                            .displayOnlyValue()
+                            .create(0, 0, CONTROL_WIDTH, BUTTON_HEIGHT, Component.empty(), (button, value) -> {
+                                this.editData.skipDuplicateTabHead = value;
+                                this.markDirty();
+                            }))));
+        }
 
         list.addRow(new RowList.Row(
                 Component.translatable("wskinloader.config.general.enable_nametag_label"), null,
@@ -300,6 +313,39 @@ public class ConfigScreen extends Screen {
                             this.editData.enableNameTagLabel = value;
                             this.markDirty();
                         }))));
+
+        list.addRow(new RowList.Row(
+                Component.translatable("wskinloader.config.general.enable_chat_faces"),
+                Component.translatable("wskinloader.config.general.enable_chat_faces.desc"),
+                List.of(CycleButton.onOffBuilder(this.editData.enableChatFaces)
+                        .displayOnlyValue()
+                        .create(0, 0, CONTROL_WIDTH, BUTTON_HEIGHT, Component.empty(), (button, value) -> {
+                            this.editData.enableChatFaces = value;
+                            this.markDirty();
+                        }))));
+
+        list.addRow(new RowList.Row(
+                Component.translatable("wskinloader.config.general.premium_first"),
+                Component.translatable("wskinloader.config.general.premium_first.desc"),
+                List.of(CycleButton.onOffBuilder(this.editData.premiumFirst)
+                        .displayOnlyValue()
+                        .create(0, 0, CONTROL_WIDTH, BUTTON_HEIGHT, Component.empty(), (button, value) -> {
+                            this.editData.premiumFirst = value;
+                            this.markDirty();
+                            this.refreshContent();
+                        }))));
+
+        if (this.editData.premiumFirst) {
+            list.addRow(new RowList.Row(
+                    Component.translatable("wskinloader.config.general.keep_premium_when_unavailable"),
+                    Component.translatable("wskinloader.config.general.keep_premium_when_unavailable.desc"),
+                    List.of(CycleButton.onOffBuilder(this.editData.keepPremiumWhenUnavailable)
+                            .displayOnlyValue()
+                            .create(0, 0, CONTROL_WIDTH, BUTTON_HEIGHT, Component.empty(), (button, value) -> {
+                                this.editData.keepPremiumWhenUnavailable = value;
+                                this.markDirty();
+                            }))));
+        }
 
         list.addRow(new RowList.Row(
                 Component.translatable("wskinloader.config.general.render_api",

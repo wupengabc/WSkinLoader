@@ -41,10 +41,33 @@ public class ModConfig {
     // Tab 列表显示头像开关
     // 描述：在Tab玩家列表中显示玩家头像
     public boolean enableTabListHeads = true;
+
+    // Tab 头像去重开关
+    // 描述：部分服务端会把玩家头像作为文字组件写进 Tab 显示名，
+    //       此时原版还会在左侧再画一个头像，导致同一个玩家出现两个头像。
+    //       开启后检测到显示名里已经带皮肤头像字形时，跳过原版左侧那个头像。
+    public boolean skipDuplicateTabHead = true;
     
     // 玩家名称旁显示皮肤来源标签
     // 描述：在游戏世界中玩家名称标签右侧显示皮肤API来源（如"LittleSkin"、"正版"等）
     public boolean enableNameTagLabel = true;
+
+    // 聊天 / UI 中的皮肤头像开关
+    // 描述：服务端在聊天或 Tab 文本里用 player 对象组件（皮肤头像字形）时，
+    //       是否把这些头像替换成 WSkinLoader 解析出的皮肤。
+    //       同时覆盖社交界面、好友列表、旁观者菜单、玩家头颅方块等走
+    //       PlayerSkinRenderCache 的头像。
+    public boolean enableChatFaces = true;
+
+    // 加载策略：是否优先使用 Mojang 正版皮肤/披风
+    // 描述：开启（默认）时优先解析正版纹理，只有该账号没有对应纹理时才回退到自定义 API；
+    //       关闭时直接使用自定义 API，不查询 Mojang。
+    public boolean premiumFirst = true;
+
+    // Mojang 服务不可用时的回退策略
+    // 描述：开启（默认）时，若 Mojang 服务暂时不可用则不加载该纹理，
+    //       避免用第三方皮肤覆盖正版皮肤；关闭时允许回退到自定义 API。
+    public boolean keepPremiumWhenUnavailable = true;
 
     // 玩家覆盖配置：玩家名 -> 覆盖规则
     public Map<String, PlayerOverride> playerOverrides = new HashMap<>();
@@ -156,7 +179,11 @@ public class ModConfig {
 
     public static class ConfigData {
         public boolean enableTabListHeads = true;
+        public boolean skipDuplicateTabHead = true;
         public boolean enableNameTagLabel = true;
+        public boolean enableChatFaces = true;
+        public boolean premiumFirst = true;
+        public boolean keepPremiumWhenUnavailable = true;
         public List<ApiConfig> skinApis = new ArrayList<>();
         public List<ApiConfig> capeApis = new ArrayList<>();
         public Map<String, PlayerOverride> playerOverrides = new HashMap<>();
@@ -167,7 +194,11 @@ public class ModConfig {
         public ConfigData deepCopy() {
             ConfigData copy = new ConfigData();
             copy.enableTabListHeads = this.enableTabListHeads;
+            copy.skipDuplicateTabHead = this.skipDuplicateTabHead;
             copy.enableNameTagLabel = this.enableNameTagLabel;
+            copy.enableChatFaces = this.enableChatFaces;
+            copy.premiumFirst = this.premiumFirst;
+            copy.keepPremiumWhenUnavailable = this.keepPremiumWhenUnavailable;
             copy.skinApis = new ArrayList<>();
             for (ApiConfig api : this.skinApis) {
                 copy.skinApis.add(api.deepCopy());
@@ -237,6 +268,8 @@ public class ModConfig {
         // 确保默认启用名称标签显示（修复首次安装时不显示的bug）
         this.enableNameTagLabel = true;
         this.enableTabListHeads = true;
+        this.enableChatFaces = true;
+        this.skipDuplicateTabHead = true;
     }
 
     public static ModConfig getInstance() {
@@ -304,8 +337,31 @@ public class ModConfig {
                     // 我们通过检查配置文件内容来判断是否是旧版本
                     if (!json.contains("enableNameTagLabel")) {
                         config.enableNameTagLabel = true;
+                    }
+
+                    // 旧配置没有头像开关：默认开启（缺失字段会被 GSON 置为 false）
+                    if (!json.contains("enableChatFaces")) {
+                        config.enableChatFaces = true;
+                    }
+                    if (!json.contains("skipDuplicateTabHead")) {
+                        config.skipDuplicateTabHead = true;
+                    }
+
+                    // 旧配置没有加载策略字段：缺失时使用默认值（正版优先、正版不可用时不回退）
+                    if (!json.contains("premiumFirst")) {
+                        config.premiumFirst = true;
+                    }
+                    if (!json.contains("keepPremiumWhenUnavailable")) {
+                        config.keepPremiumWhenUnavailable = true;
+                    }
+                    if (!json.contains("enableNameTagLabel")
+                            || !json.contains("enableChatFaces")
+                            || !json.contains("skipDuplicateTabHead")
+                            || !json.contains("premiumFirst")
+                            || !json.contains("keepPremiumWhenUnavailable")) {
                         config.save(); // 保存更新后的配置
                     }
+
                     
                     return config;
                 }
@@ -331,7 +387,7 @@ public class ModConfig {
             Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
             Files.writeString(tempPath, json);
             moveConfigFile(tempPath);
-            LOGGER.info("[WSkinLoader] 配置已保存到 {}", CONFIG_PATH);
+            LOGGER.debug("[WSkinLoader] 配置已保存到 {}", CONFIG_PATH);
         } catch (IOException e) {
             LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
         }
@@ -350,7 +406,7 @@ public class ModConfig {
                 Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
                 Files.writeString(tempPath, json);
                 moveConfigFile(tempPath);
-                LOGGER.info("[WSkinLoader] 配置已异步保存到 {}", CONFIG_PATH);
+                LOGGER.debug("[WSkinLoader] 配置已异步保存到 {}", CONFIG_PATH);
             } catch (IOException e) {
                 LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
             } finally {
@@ -369,7 +425,11 @@ public class ModConfig {
     public ConfigData deepCopy() {
         ConfigData copy = new ConfigData();
         copy.enableTabListHeads = this.enableTabListHeads;
+        copy.skipDuplicateTabHead = this.skipDuplicateTabHead;
         copy.enableNameTagLabel = this.enableNameTagLabel;
+        copy.enableChatFaces = this.enableChatFaces;
+        copy.premiumFirst = this.premiumFirst;
+        copy.keepPremiumWhenUnavailable = this.keepPremiumWhenUnavailable;
         copy.skinApis = new ArrayList<>();
         for (ApiConfig api : this.skinApis) {
             copy.skinApis.add(api.deepCopy());
@@ -390,7 +450,11 @@ public class ModConfig {
      */
     public void applyFrom(ConfigData data) {
         this.enableTabListHeads = data.enableTabListHeads;
+        this.skipDuplicateTabHead = data.skipDuplicateTabHead;
         this.enableNameTagLabel = data.enableNameTagLabel;
+        this.enableChatFaces = data.enableChatFaces;
+        this.premiumFirst = data.premiumFirst;
+        this.keepPremiumWhenUnavailable = data.keepPremiumWhenUnavailable;
         this.skinApis = new ArrayList<>();
         for (ApiConfig api : data.skinApis) {
             this.skinApis.add(api.deepCopy());

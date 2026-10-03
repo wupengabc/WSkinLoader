@@ -62,7 +62,7 @@ public class MojangSessionApi {
         try {
             // 移除 UUID 中的连字符
             String uuidString = uuid.toString().replace("-", "");
-            URL url = new URL(SESSION_SERVER + uuidString);
+            URL url = java.net.URI.create(SESSION_SERVER + uuidString).toURL();
             
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             try {
