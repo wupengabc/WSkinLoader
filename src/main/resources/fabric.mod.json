@@ -13,15 +13,11 @@
     "client": [
       "com.wupeng.wskinloader.client.WskinloaderClient"
     ],
-    "main": [
-      "com.wupeng.wskinloader.Wskinloader"
-    ],
     "modmenu": [
       "com.wupeng.wskinloader.client.config.ModMenuIntegration"
     ]
   },
   "mixins": [
-    "wskinloader.mixins.json",
     {
       "config": "wskinloader.client.mixins.json",
       "environment": "client"

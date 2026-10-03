@@ -30,10 +30,6 @@ loom {
 repositories {
     mavenCentral()
     maven { url "https://maven.terraformersmc.com/releases/" }
-    maven { 
-        url "https://maven.tr7zw.dev/repository/maven-snapshots/"
-        name "tr7zw-snapshots"
-    }
 }
 
 dependencies {

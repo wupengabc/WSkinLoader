@@ -524,26 +524,4 @@ public class ModConfig {
             return false;
         }
     }
-    
-    /**
-     * 获取皮肤API的URL列表（向后兼容）
-     */
-    public List<String> getSkinUrls() {
-        List<String> urls = new ArrayList<>();
-        for (ApiConfig api : skinApis) {
-            urls.add(api.url);
-        }
-        return urls;
-    }
-    
-    /**
-     * 获取披风API的URL列表（向后兼容）
-     */
-    public List<String> getCapeUrls() {
-        List<String> urls = new ArrayList<>();
-        for (ApiConfig api : capeApis) {
-            urls.add(api.url);
-        }
-        return urls;
-    }
 }
