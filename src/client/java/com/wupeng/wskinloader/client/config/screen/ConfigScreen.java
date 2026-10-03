@@ -69,6 +69,7 @@ public class ConfigScreen extends Screen {
     private boolean editingMappingIsSkin = true;
 
     private PageList pageList;
+    private final List<AbstractSelectionList<?>> rowLists = new ArrayList<>();
 
     public ConfigScreen(Screen parent) {
         super(new TranslatableComponent("wskinloader.config.title"));
@@ -85,7 +86,10 @@ public class ConfigScreen extends Screen {
             this.editData = ModConfig.getInstance().deepCopy();
         }
 
+        this.rowLists.clear();
+
         this.pageList = new PageList(this.minecraft, SIDEBAR_WIDTH, this.sidebarHeight(), this.sidebarTop(), 20);
+        this.pageList.setLeftPos(this.sidebarLeft());
         this.pageList.setSelectedIndex(this.selectedTab);
         this.addWidget(this.pageList);
 
@@ -180,7 +184,8 @@ public class ConfigScreen extends Screen {
         int top = this.contentTop() + topOffset;
         int w = this.contentWidth();
         RowList list = new RowList(this.minecraft, w, this.contentBottom() - top, top, ROW_HEIGHT);
-        list.updateSize(w, this.contentBottom() - top, this.contentLeft(), top);
+        list.setLeftPos(this.contentLeft());
+        this.rowLists.add(list);
         this.addWidget(list);
         return list;
     }
@@ -759,6 +764,15 @@ public class ConfigScreen extends Screen {
         int bottom = this.height - 30;
         drawPanel(stack, this.sidebarLeft() - 4, top, SIDEBAR_WIDTH + 8, bottom - top);
         drawPanel(stack, this.contentLeft() - 6, top, this.contentWidth() + 12, bottom - top);
+
+        // 1.16.5's Screen.render only renders the button list, so lists added
+        // via addWidget must be rendered explicitly.
+        if (this.pageList != null) {
+            this.pageList.render(stack, mouseX, mouseY, delta);
+        }
+        for (AbstractSelectionList<?> list : this.rowLists) {
+            list.render(stack, mouseX, mouseY, delta);
+        }
 
         super.render(stack, mouseX, mouseY, delta);
 

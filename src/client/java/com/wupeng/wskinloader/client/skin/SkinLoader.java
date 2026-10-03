@@ -268,7 +268,7 @@ public class SkinLoader {
                                                               MinecraftProfileTexture.Type type) {
         String hash = sha1Hex(
                 mojangUuid.toString() + "_premium_" + type.name() + "_" + url + "_" + invalidationNonce(cacheUuid));
-        MinecraftProfileTexture texture = withHash(new MinecraftProfileTexture(url, null), hash);
+        MinecraftProfileTexture texture = new MinecraftProfileTexture(withHashQuery(url, hash), null);
         return register(cacheUuid, texture, type, "正版");
     }
 
@@ -289,8 +289,24 @@ public class SkinLoader {
             if (texture == null) {
                 return CompletableFuture.completedFuture(null);
             }
-            return register(uuid, withHash(texture, hash), type, null);
+            // 1.16.5 的 MinecraftProfileTexture 没有独立的 hash 字段：缓存键由
+            // getHash() 从 url 的 base name 派生。用查询串把 WSkinLoader 的
+            // 失效随机数带上，这样 reload 后能命中新的纹理缓存槽。
+            MinecraftProfileTexture keyed = new MinecraftProfileTexture(
+                    withHashQuery(texture.getUrl(), hash), null);
+            return register(uuid, keyed, type, null);
         });
+    }
+
+    /**
+     * 把缓存 key 作为查询参数附加到下载地址上。服务端通常忽略它，但它会进入
+     * {@code MinecraftProfileTexture.getHash()}，从而成为纹理缓存的文件名。
+     */
+    private static String withHashQuery(String url, String hash) {
+        if (url == null) {
+            return null;
+        }
+        return url + (url.contains("?") ? "&" : "?") + "wskinloader=" + hash;
     }
 
     /**
@@ -305,6 +321,7 @@ public class SkinLoader {
             result.complete(null);
             return result;
         }
+        final String hash = texture.getHash();
         minecraft.execute(() -> {
             try {
                 if (minecraft.getSkinManager() == null) {
@@ -318,10 +335,7 @@ public class SkinLoader {
                         if (source != null) {
                             PlayerSkinSourceCache.setSource(uuid, source);
                         }
-                        String detected = detectModelFromCacheFile(texture.getHash());
-                        if (detected != null) {
-                            SkinCache.cacheModel(uuid, detected);
-                        }
+                        scheduleModelDetection(uuid, hash);
                     } else {
                         SkinCache.cacheCape(uuid, location);
                     }
@@ -335,22 +349,38 @@ public class SkinLoader {
         return result;
     }
 
-    private static MinecraftProfileTexture withHash(MinecraftProfileTexture texture, String hash) {
-        try {
-            java.lang.reflect.Field field = MinecraftProfileTexture.class.getDeclaredField("hash");
-            field.setAccessible(true);
-            field.set(texture, hash);
-        } catch (Exception e) {
-            LOGGER.warn("[WSkinLoader] 无法设置纹理 hash，将使用原版缓存文件名", e);
+    /**
+     * 自定义 API 不返回模型元数据，并且 {@code registerTexture} 是异步下载的，
+     * 因此下载完成后再读取缓存文件、按像素判断宽/窄臂并写入 {@link SkinCache}。
+     */
+    private static void scheduleModelDetection(UUID uuid, String textureHash) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null) {
+            return;
         }
-        return texture;
+        NETWORK_EXECUTOR.execute(() -> {
+            for (int attempt = 0; attempt < 8; attempt++) {
+                String detected = detectModelFromCacheFile(textureHash);
+                if (detected != null) {
+                    SkinCache.cacheModel(uuid, detected);
+                    return;
+                }
+                try {
+                    Thread.sleep(500L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        });
     }
 
     /**
      * 从下载完成的皮肤文件推断模型类型（宽/窄）。
      *
-     * <p>自定义 API 不提供模型元数据，只能按皮肤像素判断：64x64 皮肤里，
-     * 窄臂（slim）模型的第一层臂底面止于 x=49，因此 (50,16) 为全透明。
+     * <p>文件位于 {@code skins/<前两位>/<sha1(textureHash)>}（见原版
+     * {@code SkinManager.registerTexture}）。64x64 皮肤里，窄臂（slim）模型的
+     * 第一层臂底面止于 x=49，因此 (50,16) 为全透明。
      */
     private static String detectModelFromCacheFile(String textureHash) {
         try {

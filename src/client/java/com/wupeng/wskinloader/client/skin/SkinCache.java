@@ -64,11 +64,19 @@ public class SkinCache {
     }
 
     /**
-     * 删除指定玩家的所有缓存（皮肤和披风）
+     * 删除指定玩家的所有缓存（皮肤、披风和模型）
      */
     public static void removePlayer(UUID uuid) {
         SKIN_CACHE.remove(uuid);
         CAPE_CACHE.remove(uuid);
+        MODEL_CACHE.remove(uuid);
+    }
+
+    /**
+     * 删除指定玩家的模型缓存
+     */
+    public static void removeModel(UUID uuid) {
+        MODEL_CACHE.remove(uuid);
     }
 
     /**
@@ -95,5 +103,6 @@ public class SkinCache {
     public static void clear() {
         SKIN_CACHE.clear();
         CAPE_CACHE.clear();
+        MODEL_CACHE.clear();
     }
 }

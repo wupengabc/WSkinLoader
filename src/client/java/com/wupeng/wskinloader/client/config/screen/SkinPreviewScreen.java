@@ -153,6 +153,8 @@ public class SkinPreviewScreen extends Screen {
             }
             if (savedModel != null) {
                 SkinCache.cacheModel(id, savedModel);
+            } else {
+                SkinCache.removeModel(id);
             }
         }
     }
