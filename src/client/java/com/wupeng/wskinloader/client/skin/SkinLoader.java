@@ -46,6 +46,10 @@ public class SkinLoader {
         UUID uuid = profile.getId();
         String playerName = profile.getName();
 
+        // 尽早缓存 uuid -> 名字，否则下面的早退会让已缓存皮肤的玩家再也
+        // 写不进名字，缓存页只能显示 UUID。
+        PlayerNameCache.cache(profile);
+
         if (SkinCache.getSkin(uuid) != null || !LOADING.add(uuid)) {
             return;
         }
@@ -55,8 +59,6 @@ public class SkinLoader {
             LOADING.remove(uuid);
             return;
         }
-
-        PlayerNameCache.cache(profile);
 
         ModConfig config = ModConfig.getInstance();
         ModConfig.PlayerOverride override = config.getPlayerOverride(playerName);
