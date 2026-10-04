@@ -162,9 +162,12 @@ public class SkinPreviewScreen extends Screen {
     /**
      * Renders {@code entity} centered at (x, y), modelled on
      * {@code InventoryScreen.renderEntityInInventory}.
+     *
+     * <p>1.16.5 的 {@code LivingEntityRenderer} 从实体的 {@code yBodyRot} /
+     * {@code yRot} 字段读取朝向，而 {@code render} 的 yaw 参数不参与旋转，因此
+     * 需要像原版物品栏那样临时改写这些字段。
      */
-    private void drawEntity(int x, int y, int size, float yaw, LivingEntity entity) {
-        float f = (float) Math.atan(-yaw / 40.0F);
+    private void drawEntity(int x, int y, int size, float yawDegrees, LivingEntity entity) {
         RenderSystem.pushMatrix();
         RenderSystem.translatef(x, y, 1050.0F);
         RenderSystem.scalef(1.0F, 1.0F, -1.0F);
@@ -176,12 +179,41 @@ public class SkinPreviewScreen extends Screen {
         base.mul(tilt);
         poseStack.mulPose(base);
 
+        float prevBodyRot = entity.yBodyRot;
+        float prevBodyRotO = entity.yBodyRotO;
+        float prevYRot = entity.yRot;
+        float prevYRotO = entity.yRotO;
+        float prevXRot = entity.xRot;
+        float prevXRotO = entity.xRotO;
+        float prevHeadRot = entity.yHeadRot;
+        float prevHeadRotO = entity.yHeadRotO;
+
+        entity.yBodyRot = 180.0F + yawDegrees;
+        entity.yBodyRotO = entity.yBodyRot;
+        entity.yRot = 180.0F + yawDegrees;
+        entity.yRotO = entity.yRot;
+        entity.xRot = 0.0F;
+        entity.xRotO = 0.0F;
+        entity.yHeadRot = entity.yRot;
+        entity.yHeadRotO = entity.yRot;
+
         EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
+        dispatcher.overrideCameraOrientation(tilt.copy());
         dispatcher.setRenderShadow(false);
         MultiBufferSource.BufferSource buffer = Minecraft.getInstance().renderBuffers().bufferSource();
-        RenderSystem.runAsFancy(() -> dispatcher.render(entity, 0.0, 0.0, 0.0, yaw, 1.0F, poseStack, buffer, 15728880));
+        RenderSystem.runAsFancy(() -> dispatcher.render(entity, 0.0, 0.0, 0.0, 0.0F, 1.0F, poseStack, buffer, 15728880));
         buffer.endBatch();
         dispatcher.setRenderShadow(true);
+
+        entity.yBodyRot = prevBodyRot;
+        entity.yBodyRotO = prevBodyRotO;
+        entity.yRot = prevYRot;
+        entity.yRotO = prevYRotO;
+        entity.xRot = prevXRot;
+        entity.xRotO = prevXRotO;
+        entity.yHeadRot = prevHeadRot;
+        entity.yHeadRotO = prevHeadRotO;
+
         RenderSystem.popMatrix();
     }
 
@@ -208,6 +240,8 @@ public class SkinPreviewScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        // super() calls the Screen event handler, which handles the close button
+        // but does not claim the drag; claim the left button on the preview area.
         if (super.mouseClicked(mouseX, mouseY, button)) {
             return true;
         }
@@ -220,7 +254,9 @@ public class SkinPreviewScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
-        if (this.dragging) {
+        // 1.16.5 routes drags to the screen only while a button is held; the
+        // delta args are already the per-frame GUI movement.
+        if (this.dragging && button == 0) {
             this.rotationX += (float) deltaX * 1.5F;
             return true;
         }
