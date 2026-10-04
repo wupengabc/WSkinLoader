@@ -70,6 +70,7 @@ public class ConfigScreen extends Screen {
 
     private PageList pageList;
     private final List<AbstractSelectionList<?>> rowLists = new ArrayList<>();
+    private boolean needsRefresh = false;
 
     public ConfigScreen(Screen parent) {
         super(new TranslatableComponent("wskinloader.config.title"));
@@ -103,7 +104,18 @@ public class ConfigScreen extends Screen {
     }
 
     private void refresh() {
-        this.init(this.minecraft, this.width, this.height);
+        // 延迟到下一个 tick 再重建：refresh() 会在按钮/列表项点击回调里被调用，
+        // 而这些回调正处于对 children 的遍历中，立刻 init() 会清空并重填该列表。
+        this.needsRefresh = true;
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (this.needsRefresh && this.minecraft != null) {
+            this.needsRefresh = false;
+            this.init(this.minecraft, this.width, this.height);
+        }
     }
 
     private int sidebarTop() {
@@ -929,6 +941,18 @@ public class ConfigScreen extends Screen {
             return SIDEBAR_WIDTH - 12;
         }
 
+        /**
+         * 1.16.5 的 {@code getEntryAtPosition} 用
+         * {@code x < getScrollbarPosition()} 裁剪命中区域，而默认
+         * {@code getScrollbarPosition()} 返回 {@code width/2 + 124}，不含
+         * {@code x0}。列表被 {@code setLeftPos} 放到非居中位置后，该默认值会
+         * 把大部分区域判成未命中（点击无效）。改成随列表右边缘走。
+         */
+        @Override
+        protected int getScrollbarPosition() {
+            return this.x0 + this.width + 8;
+        }
+
         @Override
         public boolean mouseClicked(double mouseX, double mouseY, int button) {
             PageEntry entry = this.getEntryAtPosition(mouseX, mouseY);
@@ -1010,6 +1034,15 @@ public class ConfigScreen extends Screen {
             return this.width;
         }
 
+        /**
+         * 同 {@link PageList#getScrollbarPosition()}：默认返回值不含
+         * {@code x0}，会让内容区右半部分（正是控件所在处）的点击被判定为未命中。
+         */
+        @Override
+        protected int getScrollbarPosition() {
+            return this.x0 + this.width + 8;
+        }
+
         class RowEntry extends AbstractSelectionList.Entry<RowEntry> {
             private final Row row;
             private final int index;
@@ -1025,10 +1058,21 @@ public class ConfigScreen extends Screen {
                 if (hovered) {
                     fill(stack, rowLeft, rowTop - 1, rowLeft + rowWidth, rowTop + rowHeight - 1, 0x33FFFFFF);
                 }
+
+                int controlsWidth = 0;
+                for (AbstractWidget control : this.row.controls) {
+                    controlsWidth += control.getWidth() + GAP;
+                }
+                int textMaxWidth = Math.max(20, rowWidth - controlsWidth - 8);
+
                 int textY = rowTop + (this.row.sub == null ? (rowHeight - 8) / 2 : 2);
-                drawString(stack, ConfigScreen.this.font, this.row.label.getString(), rowLeft + 2, textY, 0xFFE0E0E6);
+                drawString(stack, ConfigScreen.this.font,
+                        trim(ConfigScreen.this.font, this.row.label.getString(), textMaxWidth),
+                        rowLeft + 2, textY, 0xFFE0E0E6);
                 if (this.row.sub != null) {
-                    drawString(stack, ConfigScreen.this.font, this.row.sub.getString(), rowLeft + 2, textY + 11, 0xFF9A9AA6);
+                    drawString(stack, ConfigScreen.this.font,
+                            trim(ConfigScreen.this.font, this.row.sub.getString(), textMaxWidth),
+                            rowLeft + 2, textY + 11, 0xFF9A9AA6);
                 }
 
                 int controlRight = rowLeft + rowWidth - 2;
