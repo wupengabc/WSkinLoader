@@ -2,22 +2,18 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.wupeng.wskinloader.client.mixin",
-  "compatibilityLevel": "JAVA_25",
+  "compatibilityLevel": "JAVA_17",
   "client": [
     "AbstractClientPlayerEntityMixin",
+    "HttpTextureMixin",
     "LivingEntityRendererMixin",
-    "PlayerFaceExtractorMixin",
+    "PlayerInfoMixin",
     "PlayerListHudMixin",
     "PlayerTabOverlaySkinMixin",
-    "PlayerSkinCacheEntryMixin",
     "PlayerSkinProviderAccessor",
-    "PlayerSkinProviderMixin",
     "SkullBlockEntityRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "overwrites": {
-    "requireAnnotations": true
   }
 }

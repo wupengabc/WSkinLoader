@@ -1,67 +1,51 @@
 package com.wupeng.wskinloader.client.config.screen;
 
-import com.wupeng.wskinloader.client.skin.SkinCache;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.client.gui.components.StringWidget;
-import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
-import net.minecraft.client.renderer.entity.EntityRenderer;
-import net.minecraft.client.renderer.entity.state.EntityRenderState;
-import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
-import net.minecraft.core.ClientAsset;
-import net.minecraft.network.chat.Component;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.item.ItemStack;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.platform.Lighting;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
+import org.joml.Matrix4f;
+import com.wupeng.wskinloader.client.skin.SkinCache;
+import com.wupeng.wskinloader.client.util.SkinTextureHelper;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.LivingEntity;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 /**
- * Skin preview screen.
+ * Skin preview screen (Minecraft 1.20.1).
  *
- * Layout, header and footer use vanilla widgets (HeaderAndFooterLayout,
- * StringWidget, Button, CycleButton) so UI add-ons and resource packs can
- * restyle it like any vanilla screen. Only the 3D viewport itself is rendered
- * directly, which is inherent to rendering a live entity model.
+ * <p>Renders the player model with the custom skin/cape from {@link SkinCache},
+ * with drag-to-rotate and scroll-to-zoom. The custom textures are injected into
+ * the cache under the rendered entity's UUID for the duration of the frame.
+ * A scoped cape override also handles targets without a cape.
  */
 public class SkinPreviewScreen extends Screen {
-
-    private static final int PANEL_TOP_MARGIN = 10;
-    private static final int PANEL_BOTTOM_MARGIN = 8;
-    private static final int PREVIEW_INSET = 16;
 
     private final Screen parent;
     private final String playerName;
     private final UUID playerUuid;
-    private final ClientAsset.Texture skinTexture;
+    private final ResourceLocation skinTexture;
 
-    private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this);
-    private final List<AbstractWidget> infoWidgets = new ArrayList<>();
-
-    private StringWidget zoomWidget;
-    private CycleButton<Boolean> modelButton;
-
-    private float rotationX = 180;
+    private float rotationX = 0F;
     private boolean dragging = false;
     private int modelSize = 70;
-    private boolean forceSlim = false;
 
-    // Viewport rectangle (also used for drag hit testing)
     private int previewX;
     private int previewY;
     private int previewW;
     private int previewH;
 
-    public SkinPreviewScreen(Screen parent, String playerName, UUID playerUuid, ClientAsset.Texture skinTexture) {
+    public SkinPreviewScreen(Screen parent, String playerName, UUID playerUuid, ResourceLocation skinTexture) {
         super(Component.translatable("wskinloader.preview.title", playerName));
         this.parent = parent;
         this.playerName = playerName;
@@ -71,101 +55,57 @@ public class SkinPreviewScreen extends Screen {
 
     @Override
     protected void init() {
-        this.infoWidgets.clear();
+        this.addRenderableWidget(Button.builder(Component.translatable("wskinloader.preview.button.close"),
+                b -> this.goToParent()).bounds(this.width / 2 - 60, this.height - 28, 120, 20).build());
 
-        this.layout.addTitleHeader(this.title, this.font);
+        this.previewX = this.width / 2 + 10;
+        this.previewY = 40;
+        this.previewW = Math.max(120, this.width / 2 - 30);
+        this.previewH = this.height - 80;
+    }
 
-        this.addInfoLine(Component.translatable("wskinloader.preview.info_title"));
-        this.addInfoLine(Component.translatable("wskinloader.preview.name")
-                .copy().append(Component.literal(" " + this.playerName)));
+    @Override
+    public void render(GuiGraphics stack, int mouseX, int mouseY, float delta) {
+        this.renderBackground(stack);
+
+        stack.drawCenteredString(this.font, this.title.getString(), this.width / 2, 12, 0xFFFFFFFF);
+
+        int infoX = 20;
+        int infoY = 40;
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.info_title"), infoX, infoY);
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.name")
+                .append(Component.literal(" " + this.playerName)), infoX, infoY);
         if (this.playerUuid != null) {
-            this.addInfoLine(Component.translatable("wskinloader.preview.uuid")
-                    .copy().append(Component.literal(" " + this.playerUuid)));
+            infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.uuid")
+                    .append(Component.literal(" " + this.playerUuid)), infoX, infoY);
         }
-        this.addInfoLine(Component.translatable("wskinloader.preview.skin")
-                .copy().append(Component.literal(" ").append(Component.translatable(
-                        this.skinTexture != null || (this.playerUuid != null && SkinCache.getSkin(this.playerUuid) != null)
-                                ? "wskinloader.preview.skin_loaded"
-                                : "wskinloader.preview.skin_not_loaded"))));
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.skin")
+                .append(Component.translatable(
+                        this.skinTexture != null || (this.playerUuid != null && SkinCache.getCachedSkin(this.playerUuid) != null)
+                                ? "wskinloader.preview.skin_loaded" : "wskinloader.preview.skin_not_loaded")), infoX, infoY);
+        infoY += 8;
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.controls_title"), infoX, infoY);
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.controls.drag"), infoX, infoY);
+        infoY = this.infoLine(stack, Component.translatable("wskinloader.preview.controls.zoom"), infoX, infoY);
+        this.infoLine(stack, Component.translatable("wskinloader.preview.controls.esc"), infoX, infoY);
 
-        this.addInfoLine(Component.translatable("wskinloader.preview.controls_title"));
-        this.addInfoLine(Component.translatable("wskinloader.preview.controls.drag"));
-        this.addInfoLine(Component.translatable("wskinloader.preview.controls.zoom"));
-        this.addInfoLine(Component.translatable("wskinloader.preview.controls.esc"));
+        this.renderPreview(stack);
 
-        this.zoomWidget = new StringWidget(220, 12,
-                Component.translatable("wskinloader.preview.zoom", this.modelSize), this.font);
-        this.addInfoWidget(this.zoomWidget);
-
-        this.modelButton = new CycleButton.Builder<Boolean>(
-                value -> Component.translatable(value
-                        ? "wskinloader.preview.model_slim"
-                        : "wskinloader.preview.model_wide"),
-                () -> this.forceSlim)
-                .withValues(List.of(false, true))
-                .create(0, 0, 180, 20, Component.translatable("wskinloader.preview.model_type"),
-                        (button, value) -> this.forceSlim = value);
-        this.addInfoWidget(this.modelButton);
-
-        this.layout.addToFooter(Button.builder(Component.translatable("wskinloader.preview.button.close"),
-                button -> this.goToParent()).width(120).build());
-
-        this.layout.visitWidgets(this::addRenderableWidget);
-
-        this.repositionElements();
+        super.render(stack, mouseX, mouseY, delta);
     }
 
-    private void addInfoLine(Component text) {
-        this.addInfoWidget(new StringWidget(240, 12, text, this.font));
+    private int infoLine(GuiGraphics stack, Component text, int x, int y) {
+        stack.drawString(this.font, text.getString(), x, y, 0xFFC8C8D2);
+        return y + 12;
     }
 
-    private void addInfoWidget(AbstractWidget widget) {
-        this.infoWidgets.add(widget);
-        this.addRenderableWidget(widget);
-    }
-
-    @Override
-    protected void repositionElements() {
-        this.layout.arrangeElements();
-
-        int contentTop = this.layout.getHeaderHeight() + PANEL_TOP_MARGIN;
-        int contentBottom = this.height - this.layout.getFooterHeight() - PANEL_BOTTOM_MARGIN;
-        int totalWidth = Math.min(760, this.width - 40);
-        int left = (this.width - totalWidth) / 2;
-        int halfWidth = (totalWidth - 12) / 2;
-
-        // Left: info column
-        int infoX = left + 12;
-        int infoY = contentTop + 10;
-        for (AbstractWidget widget : this.infoWidgets) {
-            widget.setPosition(infoX, infoY);
-            infoY += widget.getHeight() + 4;
-        }
-
-        // Right: 3D viewport
-        this.previewX = left + halfWidth + 12;
-        this.previewY = contentTop;
-        this.previewW = halfWidth;
-        this.previewH = contentBottom - contentTop;
-    }
-
-    @Override
-    public void extractRenderState(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float delta) {
-        // Viewport is intentionally transparent so the (blurred) world shows through.
-        ctx.centeredText(this.font, Component.translatable("wskinloader.preview.3d_title"),
-                this.previewX + this.previewW / 2, this.previewY + 8, 0xFFA0A0B0);
-        this.renderPreview(ctx, mouseX, mouseY);
-
-        super.extractRenderState(ctx, mouseX, mouseY, delta);
-
-    }
-
-    private void renderPreview(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+    private void renderPreview(GuiGraphics stack) {
         int centerX = this.previewX + this.previewW / 2;
         int centerY = this.previewY + this.previewH / 2;
 
         if (this.minecraft == null || this.minecraft.player == null) {
-            graphics.centeredText(this.font, Component.translatable("wskinloader.preview.error.need_world"),
+            stack.drawCenteredString(this.font,
+                    Component.translatable("wskinloader.preview.error.need_world").getString(),
                     centerX, centerY, 0xFFFF7777);
             return;
         }
@@ -175,27 +115,107 @@ public class SkinPreviewScreen extends Screen {
             entity = this.minecraft.player;
         }
 
-        ClientAsset.Texture skinToUse = this.skinTexture;
-        if (skinToUse == null && this.playerUuid != null) {
-            skinToUse = SkinCache.getSkin(this.playerUuid);
+        UUID id = entity.getUUID();
+        ResourceLocation savedSkin = SkinCache.getSkin(id);
+        String savedModel = SkinCache.getModel(id);
+
+        ResourceLocation skinToUse = this.playerUuid != null ? SkinCache.getCachedSkin(this.playerUuid) : null;
+        if (skinToUse == null) {
+            skinToUse = this.skinTexture;
         }
-        ClientAsset.Texture capeToUse = this.playerUuid != null ? SkinCache.getCape(this.playerUuid) : null;
+        ResourceLocation capeToUse = this.playerUuid != null ? SkinCache.getCachedCape(this.playerUuid) : null;
+        String modelToUse = this.playerUuid != null ? SkinCache.getCachedModel(this.playerUuid) : null;
 
-        boolean usingCurrentPlayerAsBase = this.playerUuid != null && !entity.getUUID().equals(this.playerUuid);
-
-        int x0 = this.previewX + PREVIEW_INSET;
-        int y0 = this.previewY + 22;
-        int x1 = this.previewX + this.previewW - PREVIEW_INSET;
-        int y1 = this.previewY + this.previewH - PREVIEW_INSET;
-
+        SkinTextureHelper.PreviewCape savedPreviewCape = SkinTextureHelper.setPreviewCape(
+                new SkinTextureHelper.PreviewCape(id, capeToUse));
         try {
-            graphics.enableScissor(x0, y0, x1, y1);
-            this.extractEntityWithCustomTextures(graphics, x0, y0, x1, y1, this.modelSize, 0.0625F,
-                    this.rotationX, 0F, entity, skinToUse, capeToUse, usingCurrentPlayerAsBase);
-            graphics.disableScissor();
+            if (skinToUse != null) {
+                SkinCache.cacheSkin(id, skinToUse);
+            }
+            if (modelToUse != null) {
+                SkinCache.cacheModel(id, modelToUse);
+            }
+            this.drawEntity(stack, centerX, centerY, this.modelSize, this.rotationX, entity);
         } catch (Exception e) {
-            graphics.centeredText(this.font, Component.translatable("wskinloader.preview.error.render_failed"),
+            stack.drawCenteredString(this.font,
+                    Component.translatable("wskinloader.preview.error.render_failed").getString(),
                     centerX, centerY, 0xFFFF7777);
+        } finally {
+            SkinTextureHelper.setPreviewCape(savedPreviewCape);
+            if (savedSkin != null) {
+                SkinCache.cacheSkin(id, savedSkin);
+            } else {
+                SkinCache.removeSkin(id);
+            }
+            if (savedModel != null) {
+                SkinCache.cacheModel(id, savedModel);
+            } else {
+                SkinCache.removeModel(id);
+            }
+        }
+    }
+
+    /**
+     * Renders {@code entity} centered at (x, y), modelled on
+     * {@code InventoryScreen.renderEntityInInventory}.
+     *
+     * <p>The renderer reads entity rotations, so they are temporarily replaced
+     * and restored after rendering, as in the inventory screen.
+     */
+    private void drawEntity(GuiGraphics graphics, int x, int y, int size, float yawDegrees, LivingEntity entity) {
+        graphics.flush();
+        // A failed renderer can leave extra poses; isolate it from the screen's stack.
+        PoseStack poseStack = new PoseStack();
+        poseStack.last().pose().set(graphics.pose().last().pose());
+        poseStack.last().normal().set(graphics.pose().last().normal());
+        poseStack.pushPose();
+        poseStack.translate(x, y, 50.0);
+        poseStack.mulPoseMatrix(new Matrix4f().scaling(size, size, -size));
+        Quaternionf base = Axis.ZP.rotationDegrees(180.0F);
+        Quaternionf tilt = new Quaternionf();
+        base.mul(tilt);
+        poseStack.mulPose(base);
+
+        float prevBodyRot = entity.yBodyRot;
+        float prevBodyRotO = entity.yBodyRotO;
+        float prevYRot = entity.getYRot();
+        float prevYRotO = entity.yRotO;
+        float prevXRot = entity.getXRot();
+        float prevXRotO = entity.xRotO;
+        float prevHeadRot = entity.yHeadRot;
+        float prevHeadRotO = entity.yHeadRotO;
+
+        entity.yBodyRot = 180.0F + yawDegrees;
+        entity.yBodyRotO = entity.yBodyRot;
+        entity.setYRot(180.0F + yawDegrees);
+        entity.yRotO = entity.getYRot();
+        entity.setXRot(0.0F);
+        entity.xRotO = 0.0F;
+        entity.yHeadRot = entity.getYRot();
+        entity.yHeadRotO = entity.getYRot();
+
+        EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
+        Quaternionf previousCamera = new Quaternionf(dispatcher.cameraOrientation());
+        try {
+            Lighting.setupForEntityInInventory();
+            dispatcher.overrideCameraOrientation(new Quaternionf(tilt));
+            dispatcher.setRenderShadow(false);
+            MultiBufferSource.BufferSource buffer = graphics.bufferSource();
+            RenderSystem.runAsFancy(() -> dispatcher.render(entity, 0.0, 0.0, 0.0, 0.0F, 1.0F, poseStack, buffer, 15728880));
+            graphics.flush();
+        } finally {
+            dispatcher.setRenderShadow(true);
+            dispatcher.overrideCameraOrientation(previousCamera);
+            entity.yBodyRot = prevBodyRot;
+            entity.yBodyRotO = prevBodyRotO;
+            entity.setYRot(prevYRot);
+            entity.yRotO = prevYRotO;
+            entity.setXRot(prevXRot);
+            entity.xRotO = prevXRotO;
+            entity.yHeadRot = prevHeadRot;
+            entity.yHeadRotO = prevHeadRotO;
+            poseStack.popPose();
+            Lighting.setupFor3DItems();
         }
     }
 
@@ -203,7 +223,7 @@ public class SkinPreviewScreen extends Screen {
         if (this.minecraft == null || this.minecraft.level == null) {
             return null;
         }
-        for (net.minecraft.client.player.AbstractClientPlayer player : this.minecraft.level.players()) {
+        for (AbstractClientPlayer player : this.minecraft.level.players()) {
             if (this.playerUuid != null && player.getUUID().equals(this.playerUuid)) {
                 return player;
             }
@@ -214,133 +234,20 @@ public class SkinPreviewScreen extends Screen {
         return null;
     }
 
-    private void extractEntityWithCustomTextures(
-            GuiGraphicsExtractor graphics,
-            int x0, int y0, int x1, int y1,
-            int size, float offsetY,
-            float rotX, float rotY,
-            LivingEntity entity,
-            ClientAsset.Texture customSkin,
-            ClientAsset.Texture customCape,
-            boolean stripEntityCape) {
-
-        Quaternionf rotation = new Quaternionf()
-                .rotateZ((float) Math.PI)
-                .rotateY(rotX * (float) (Math.PI / 180.0));
-        Quaternionf xRotation = new Quaternionf();
-
-        EntityRenderState renderState = extractRenderState(entity);
-
-        if (renderState instanceof net.minecraft.client.renderer.entity.state.AvatarRenderState avatarState) {
-            net.minecraft.world.entity.player.PlayerSkin currentSkin = avatarState.skin;
-
-            net.minecraft.world.entity.player.PlayerModelType modelType;
-            if (this.modelButton != null) {
-                modelType = this.forceSlim
-                        ? net.minecraft.world.entity.player.PlayerModelType.SLIM
-                        : net.minecraft.world.entity.player.PlayerModelType.WIDE;
-            } else {
-                modelType = currentSkin.model();
-            }
-
-            ClientAsset.Texture capeToRender = customCape;
-            if (capeToRender == null && !stripEntityCape) {
-                capeToRender = currentSkin.cape();
-            }
-
-            avatarState.skin = new net.minecraft.world.entity.player.PlayerSkin(
-                    customSkin != null ? customSkin : currentSkin.body(),
-                    capeToRender,
-                    currentSkin.elytra(),
-                    modelType,
-                    currentSkin.secure()
-            );
-        }
-
-        applyPoseToRenderState(renderState);
-
-        Vector3f translation = new Vector3f(0.0F, renderState.boundingBoxHeight / 2.0F + offsetY, 0.0F);
-        graphics.entity(renderState, size, translation, rotation, xRotation, x0, y0, x1, y1);
-    }
-
-    private static void applyPoseToRenderState(EntityRenderState renderState) {
-        if (renderState instanceof LivingEntityRenderState livingState) {
-            livingState.bodyRot = 0;
-            livingState.yRot = 0;
-            livingState.xRot = 0;
-
-            livingState.wornHeadType = null;
-            livingState.wornHeadProfile = null;
-            livingState.wornHeadAnimationPos = 0;
-
-            livingState.isFullyFrozen = false;
-            livingState.hasRedOverlay = false;
-            livingState.isAutoSpinAttack = false;
-            livingState.isInWater = false;
-            livingState.deathTime = 0;
-            livingState.walkAnimationPos = 0;
-            livingState.walkAnimationSpeed = 0;
-
-            if (livingState instanceof net.minecraft.client.renderer.entity.state.HumanoidRenderState humanoidState) {
-                humanoidState.headEquipment = ItemStack.EMPTY;
-                humanoidState.chestEquipment = ItemStack.EMPTY;
-                humanoidState.legsEquipment = ItemStack.EMPTY;
-                humanoidState.feetEquipment = ItemStack.EMPTY;
-                humanoidState.isCrouching = false;
-                humanoidState.isFallFlying = false;
-                humanoidState.isVisuallySwimming = false;
-                humanoidState.isPassenger = false;
-                humanoidState.isUsingItem = false;
-            }
-
-            if (livingState instanceof net.minecraft.client.renderer.entity.state.ArmedEntityRenderState armedState) {
-                armedState.rightHandItemStack = ItemStack.EMPTY;
-                armedState.leftHandItemStack = ItemStack.EMPTY;
-                armedState.rightArmPose = net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY;
-                armedState.leftArmPose = net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY;
-            }
-
-            if (livingState instanceof net.minecraft.client.renderer.entity.state.AvatarRenderState avatarState) {
-                avatarState.arrowCount = 0;
-                avatarState.stingerCount = 0;
-                avatarState.parrotOnLeftShoulder = null;
-                avatarState.parrotOnRightShoulder = null;
-                avatarState.isSpectator = false;
-            }
-
-            livingState.boundingBoxWidth = livingState.boundingBoxWidth / livingState.scale;
-            livingState.boundingBoxHeight = livingState.boundingBoxHeight / livingState.scale;
-            livingState.scale = 1.0F;
-        }
-    }
-
-    private static EntityRenderState extractRenderState(LivingEntity entity) {
-        EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-        EntityRenderer<? super LivingEntity, ?> renderer = dispatcher.getRenderer(entity);
-        EntityRenderState renderState = renderer.createRenderState(entity, 1.0F);
-        renderState.shadowPieces.clear();
-        renderState.outlineColor = 0;
-        return renderState;
-    }
-
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        this.modelSize = Math.max(30, Math.min(90, this.modelSize + (int) (verticalAmount * 5)));
-        if (this.zoomWidget != null) {
-            this.zoomWidget.setMessage(Component.translatable("wskinloader.preview.zoom", this.modelSize));
-        }
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        this.modelSize = Math.max(30, Math.min(120, this.modelSize + (int) (amount * 5)));
         return true;
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        // Vanilla widgets (model type, close) get the click first; a press that
-        // no widget claims starts a rotation drag.
-        if (super.mouseClicked(event, doubleClick)) {
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        // super() calls the Screen event handler, which handles the close button
+        // but does not claim the drag; claim the left button on the preview area.
+        if (super.mouseClicked(mouseX, mouseY, button)) {
             return true;
         }
-        // Minecraft 26.3 uses SDL button numbering: primary mouse button is 1.
-        if (event.button() == 1) {
+        if (button == 0) {
             this.dragging = true;
             return true;
         }
@@ -348,20 +255,22 @@ public class SkinPreviewScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
-        if (this.dragging) {
-            this.rotationX += (float) deltaX * 1.5F;
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        // Minecraft routes drags to the screen only while a button is held; the
+        // delta args are already the per-frame GUI movement.
+        if (this.dragging && button == 0) {
+            this.rotationX -= (float) deltaX * 1.5F;
             return true;
         }
-        return super.mouseDragged(event, deltaX, deltaY);
+        return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
     }
 
     @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
-        if (event.button() == 1) {
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0) {
             this.dragging = false;
         }
-        return super.mouseReleased(event);
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override
@@ -371,7 +280,7 @@ public class SkinPreviewScreen extends Screen {
 
     private void goToParent() {
         if (this.minecraft != null) {
-            this.minecraft.setScreenAndShow(this.parent);
+            this.minecraft.setScreen(this.parent);
         }
     }
 }

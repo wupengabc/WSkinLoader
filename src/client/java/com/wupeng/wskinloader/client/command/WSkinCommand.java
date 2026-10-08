@@ -1,18 +1,16 @@
 package com.wupeng.wskinloader.client.command;
 
-import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.wupeng.wskinloader.client.config.ModConfig;
 import com.wupeng.wskinloader.client.skin.SkinLoader;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
+
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 
 /**
  * Client commands for quickly changing the local player's own skin/cape.
@@ -23,10 +21,6 @@ import net.minecraft.network.chat.Component;
  *   /wskin reset skin      remove the skin mapping
  *   /wskin reset cape      remove the cape mapping
  * </pre>
- *
- * <p>Mapping is stored in the local player's player-override entry: an existing
- * entry is only updated, otherwise the entry is created automatically. Unrelated
- * fields of an existing entry are preserved.
  */
 public final class WSkinCommand {
 
@@ -34,67 +28,52 @@ public final class WSkinCommand {
     }
 
     public static void register() {
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
-            registerRoot(dispatcher, "wskin");
-        });
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
+                literal("wskin")
+                        .executes(context -> showUsage(context.getSource()))
+                        .then(literal("skin")
+                                .then(argument("player", StringArgumentType.word())
+                                        .executes(context -> setMapping(context.getSource(),
+                                                StringArgumentType.getString(context, "player"), true))))
+                        .then(literal("cape")
+                                .then(argument("player", StringArgumentType.word())
+                                        .executes(context -> setMapping(context.getSource(),
+                                                StringArgumentType.getString(context, "player"), false))))
+                        .then(literal("reset")
+                                .then(literal("skin").executes(context -> resetMapping(context.getSource(), true)))
+                                .then(literal("cape").executes(context -> resetMapping(context.getSource(), false))))));
     }
 
-    private static void registerRoot(CommandDispatcher<FabricClientCommandSource> dispatcher, String root) {
-        // attended() keeps these from being triggered by a server-sent text
-        // component; they are only run when the user types them.
-        LiteralArgumentBuilder<FabricClientCommandSource> node = ClientCommands.literal(root)
-                .requires(FabricClientCommandSource::attended)
-                .executes(WSkinCommand::showUsage);
-
-        node.then(ClientCommands.literal("skin")
-                .then(ClientCommands.argument("player", StringArgumentType.word())
-                        .executes(context -> setMapping(context, true))));
-
-        node.then(ClientCommands.literal("cape")
-                .then(ClientCommands.argument("player", StringArgumentType.word())
-                        .executes(context -> setMapping(context, false))));
-
-        node.then(ClientCommands.literal("reset")
-                .then(ClientCommands.literal("skin").executes(context -> resetMapping(context, true)))
-                .then(ClientCommands.literal("cape").executes(context -> resetMapping(context, false))));
-
-        dispatcher.register(node);
-    }
-
-    private static int showUsage(CommandContext<FabricClientCommandSource> context) {
-        FabricClientCommandSource source = context.getSource();
+    private static int showUsage(FabricClientCommandSource source) {
         source.sendFeedback(Component.translatable("wskinloader.command.usage.title"));
         source.sendFeedback(Component.translatable("wskinloader.command.usage.skin"));
         source.sendFeedback(Component.translatable("wskinloader.command.usage.cape"));
         source.sendFeedback(Component.translatable("wskinloader.command.usage.reset_skin"));
         source.sendFeedback(Component.translatable("wskinloader.command.usage.reset_cape"));
-        // A bare /wskin is informational only.
         return 0;
     }
 
-    private static int setMapping(CommandContext<FabricClientCommandSource> context, boolean skin) throws CommandSyntaxException {
-        FabricClientCommandSource source = context.getSource();
+    private static int setMapping(FabricClientCommandSource source, String rawSourceName, boolean skin) {
         LocalPlayer player = source.getPlayer();
         if (player == null) {
             source.sendError(Component.translatable("wskinloader.command.error.no_player"));
             return 0;
         }
 
-        String sourceName = StringArgumentType.getString(context, "player").trim();
+        String sourceName = rawSourceName == null ? "" : rawSourceName.trim();
         if (sourceName.isEmpty()) {
             source.sendError(Component.translatable("wskinloader.command.error.empty_name"));
             return 0;
         }
 
-        String ownerName = player.getGameProfile().name();
+        String ownerName = player.getGameProfile().getName();
         if (ownerName == null || ownerName.isEmpty()) {
             source.sendError(Component.translatable("wskinloader.command.error.no_player"));
             return 0;
         }
 
         if (sourceName.equalsIgnoreCase(ownerName)) {
-            // Mapping a player onto themselves is the same as resetting the mapping.
-            return resetMapping(context, skin);
+            return resetMapping(source, skin);
         }
 
         ModConfig.PlayerOverride override = getOrCreateOverride(ownerName);
@@ -114,15 +93,14 @@ public final class WSkinCommand {
         return 1;
     }
 
-    private static int resetMapping(CommandContext<FabricClientCommandSource> context, boolean skin) throws CommandSyntaxException {
-        FabricClientCommandSource source = context.getSource();
+    private static int resetMapping(FabricClientCommandSource source, boolean skin) {
         LocalPlayer player = source.getPlayer();
         if (player == null) {
             source.sendError(Component.translatable("wskinloader.command.error.no_player"));
             return 0;
         }
 
-        String ownerName = player.getGameProfile().name();
+        String ownerName = player.getGameProfile().getName();
         ModConfig.PlayerOverride override = ownerName == null ? null : ModConfig.getInstance().getPlayerOverride(ownerName);
 
         if (override != null) {
@@ -142,12 +120,6 @@ public final class WSkinCommand {
         return 1;
     }
 
-    /**
-     * Returns the existing entry unchanged, or creates a new one whose rules match
-     * the defaults: premium first (custom API disabled), so a mapping shows the
-     * source player's premium texture and only falls back to the custom APIs when
-     * that account has none.
-     */
     private static ModConfig.PlayerOverride getOrCreateOverride(String playerName) {
         ModConfig config = ModConfig.getInstance();
         ModConfig.PlayerOverride override = config.getPlayerOverride(playerName);
@@ -160,17 +132,11 @@ public final class WSkinCommand {
         return override;
     }
 
-    /**
-     * Clears the cached textures of the local player and starts loading again, so
-     * the new mapping is visible without relogging.
-     */
     private static void applyToLocalPlayer(LocalPlayer player) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null) {
             return;
         }
-        // Pass the name explicitly: reload(name) does not depend on the name cache
-        // being populated yet, which is not guaranteed when the command runs.
-        SkinLoader.reload(player.getUUID(), player.getGameProfile().name());
+        SkinLoader.reload(player.getUUID(), player.getGameProfile().getName());
     }
 }
