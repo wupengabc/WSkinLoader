@@ -2,57 +2,40 @@ package com.wupeng.wskinloader.client.mixin;
 
 import com.wupeng.wskinloader.client.config.ModConfig;
 import com.wupeng.wskinloader.client.skin.PlayerSkinSourceCache;
-import net.minecraft.client.renderer.entity.EntityRenderer;
-import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
- * 在玩家名称标签旁显示皮肤来源
+ * 在玩家名称标签旁显示皮肤来源。
+ *
+ * <p>重定向 {@code EntityRenderer.render} 里读取显示名的调用点，把来源标签追加到
+ * 名称组件后面（原版名称标签用同一个组件渲染）。
  */
 @Mixin(EntityRenderer.class)
-public abstract class LivingEntityRendererMixin<T extends Entity, S extends EntityRenderState> {
+public abstract class LivingEntityRendererMixin {
 
-    @Inject(
-        method = "extractRenderState",
-        at = @At("TAIL")
+    @Redirect(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/Entity;getDisplayName()Lnet/minecraft/network/chat/Component;"
+        )
     )
-    private void onExtractRenderState(
-        T entity,
-        S state,
-        float partialTicks,
-        CallbackInfo ci
-    ) {
-        // 只处理玩家实体
-        if (!(entity instanceof Player player)) {
-            return;
+    private Component wskinloader$appendSourceLabel(Entity entity) {
+        Component original = entity.getDisplayName();
+        if (!(entity instanceof Player) || !ModConfig.getInstance().enableNameTagLabel) {
+            return original;
         }
-
-        // 检查配置是否启用
-        ModConfig config = ModConfig.getInstance();
-        if (!config.enableNameTagLabel) {
-            return;
-        }
-
-        // 检查是否有名称标签
-        if (state.nameTag == null) {
-            return;
-        }
-
-        // 获取皮肤来源
-        String source = PlayerSkinSourceCache.getSource(player.getUUID());
+        String source = PlayerSkinSourceCache.getSource(entity.getUUID());
         if (source == null || source.isEmpty()) {
-            return;
+            return original;
         }
-
-        // 在名称标签后添加来源信息
-        Component originalName = state.nameTag;
-        Component sourceText = Component.literal(" [" + source + "]").withColor(0x4677FF); // 蓝色
-        state.nameTag = originalName.copy().append(sourceText);
+        return original.copy().append(Component.literal(" [" + source + "]").withStyle(ChatFormatting.BLUE));
     }
 }
