@@ -3,8 +3,8 @@ package com.wupeng.wskinloader.client.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public class ModConfig {
-    private static final Logger LOGGER = LoggerFactory.getLogger("wskinloader");
+    private static final Logger LOGGER = LogManager.getLogger("wskinloader");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("wskinloader.json");
 
@@ -229,7 +229,7 @@ public class ModConfig {
             }
             for (Map.Entry<String, PlayerOverride> entry : playerOverrides.entrySet()) {
                 String name = entry.getKey();
-                if (name == null || name.isBlank()) {
+                if (name == null || name.trim().isEmpty()) {
                     return "玩家名不能为空";
                 }
                 PlayerOverride override = entry.getValue();
@@ -241,7 +241,7 @@ public class ModConfig {
         }
 
         private static String validateApi(ApiConfig api) {
-            if (api == null || api.url == null || api.url.isBlank()) return "API 地址不能为空";
+            if (api == null || api.url == null || api.url.trim().isEmpty()) return "API 地址不能为空";
             try {
                 java.net.URI uri = java.net.URI.create(api.url.replace("%name%", "player"));
                 String scheme = uri.getScheme();
@@ -291,15 +291,15 @@ public class ModConfig {
     private static ModConfig loadInternal() {
         if (Files.exists(CONFIG_PATH)) {
             try {
-                String json = Files.readString(CONFIG_PATH);
+                String json = new String(Files.readAllBytes(CONFIG_PATH), java.nio.charset.StandardCharsets.UTF_8);
                 ModConfig config = GSON.fromJson(json, ModConfig.class);
                 if (config != null) {
                     // 向后兼容：确保集合字段不为 null
                     if (config.skinApis == null) config.skinApis = new ArrayList<>();
                     if (config.capeApis == null) config.capeApis = new ArrayList<>();
                     if (config.playerOverrides == null) config.playerOverrides = new HashMap<>();
-                    config.skinApis.removeIf(api -> api == null || api.url == null || api.url.isBlank());
-                    config.capeApis.removeIf(api -> api == null || api.url == null || api.url.isBlank());
+                    config.skinApis.removeIf(api -> api == null || api.url == null || api.url.trim().isEmpty());
+                    config.capeApis.removeIf(api -> api == null || api.url == null || api.url.trim().isEmpty());
                     config.skinApis.forEach(api -> { if (api.alias == null) api.alias = "暂无别名"; });
                     config.capeApis.forEach(api -> { if (api.alias == null) api.alias = "暂无别名"; });
                     config.playerOverrides.entrySet().removeIf(entry -> entry.getKey() == null || entry.getValue() == null);
@@ -385,7 +385,7 @@ public class ModConfig {
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
             Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
-            Files.writeString(tempPath, json);
+            Files.write(tempPath, json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             moveConfigFile(tempPath);
             LOGGER.debug("[WSkinLoader] 配置已保存到 {}", CONFIG_PATH);
         } catch (IOException e) {
@@ -404,7 +404,7 @@ public class ModConfig {
             try {
                 Files.createDirectories(CONFIG_PATH.getParent());
                 Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
-                Files.writeString(tempPath, json);
+                Files.write(tempPath, json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 moveConfigFile(tempPath);
                 LOGGER.debug("[WSkinLoader] 配置已异步保存到 {}", CONFIG_PATH);
             } catch (IOException e) {
@@ -514,7 +514,7 @@ public class ModConfig {
     }
 
     public static boolean isAllowedApiUrl(String value) {
-        if (value == null || value.isBlank() || value.length() > 512) return false;
+        if (value == null || value.trim().isEmpty() || value.length() > 512) return false;
         try {
             java.net.URI uri = java.net.URI.create(value.replace("%name%", "player"));
             String scheme = uri.getScheme();

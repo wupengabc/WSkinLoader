@@ -2,102 +2,62 @@ package com.wupeng.wskinloader.client.skin;
 
 import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import com.wupeng.wskinloader.client.config.ModConfig;
-import net.minecraft.client.renderer.texture.SkinTextureDownloader;
-import net.minecraft.core.ClientAsset;
-import net.minecraft.resources.Identifier;
 
-import java.nio.file.Path;
+import java.net.URLEncoder;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.nio.charset.StandardCharsets;
-import java.net.URLEncoder;
 
+/**
+ * 从用户配置的自定义 API 下载皮肤 / 披风。
+ *
+ * <p>Returns URL descriptors only; SkinLoader validates each download before
+ * recording the texture and its source in the player cache.
+ */
 public class CustomSkinLoader {
-    
-    public static CompletableFuture<ClientAsset.Texture> loadCustomSkin(
+
+    public static CompletableFuture<MinecraftProfileTexture> loadCustomSkin(
         UUID playerUuid,
         String playerName,
-        SkinTextureDownloader downloader,
-        Path cachePath,
-        Identifier textureId,
         MinecraftProfileTexture.Type type
     ) {
-        ModConfig config = ModConfig.getInstance();
-        List<ModConfig.ApiConfig> apis = type == MinecraftProfileTexture.Type.SKIN ? config.skinApis : config.capeApis;
-        
-        if (apis.isEmpty()) {
-            return CompletableFuture.completedFuture(null);
-        }
-        
-        return tryLoadFromApis(playerUuid, playerName, apis, 0, downloader, cachePath, textureId, type);
+        return loadCustomSkinFromIndex(playerUuid, playerName, type, 0);
     }
-    
-    public static CompletableFuture<ClientAsset.Texture> loadCustomSkinFromIndex(
+
+    public static CompletableFuture<MinecraftProfileTexture> loadCustomSkinFromIndex(
         UUID playerUuid,
         String playerName,
-        SkinTextureDownloader downloader,
-        Path cachePath,
-        Identifier textureId,
         MinecraftProfileTexture.Type type,
         int apiIndex
     ) {
         ModConfig config = ModConfig.getInstance();
         List<ModConfig.ApiConfig> apis = type == MinecraftProfileTexture.Type.SKIN ? config.skinApis : config.capeApis;
-        
+
         if (apis.isEmpty() || apiIndex < 0 || apiIndex >= apis.size()) {
-            return CompletableFuture.completedFuture(null);
+            return completed(null);
         }
-        
+
         ModConfig.ApiConfig api = apis.get(apiIndex);
         String url = buildUrl(api.url, playerName);
-        if (url == null) return CompletableFuture.completedFuture(null);
-        
-        return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
-            .thenApply(result -> {
-                if (result != null && type == MinecraftProfileTexture.Type.SKIN) {
-                    // 记录皮肤来源
-                    PlayerSkinSourceCache.setSource(playerUuid, api.alias);
-                }
-                return result;
-            })
-            .exceptionally(throwable -> null);
-    }
-    
-    private static CompletableFuture<ClientAsset.Texture> tryLoadFromApis(
-        UUID playerUuid,
-        String playerName,
-        List<ModConfig.ApiConfig> apis,
-        int index,
-        SkinTextureDownloader downloader,
-        Path cachePath,
-        Identifier textureId,
-        MinecraftProfileTexture.Type type
-    ) {
-        if (index >= apis.size()) {
-            return CompletableFuture.completedFuture(null);
+        if (url == null) return completed(null);
+
+        java.util.Map<String, String> metadata = new java.util.HashMap<>();
+        if (api.alias != null) {
+            metadata.put("wskinloader_source", api.alias);
         }
-        
-        ModConfig.ApiConfig api = apis.get(index);
-        String url = buildUrl(api.url, playerName);
-        if (url == null) return CompletableFuture.completedFuture(null);
-        
-        return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
-            .exceptionally(throwable -> null)
-            .thenCompose(result -> {
-                if (result != null) {
-                    if (type == MinecraftProfileTexture.Type.SKIN) {
-                        // 记录皮肤来源
-                        PlayerSkinSourceCache.setSource(playerUuid, api.alias);
-                    }
-                    return CompletableFuture.completedFuture(result);
-                }
-                return tryLoadFromApis(playerUuid, playerName, apis, index + 1, downloader, cachePath, textureId, type);
-            });
+        return completed(new MinecraftProfileTexture(url, metadata));
     }
 
     private static String buildUrl(String template, String playerName) {
         if (!ModConfig.isAllowedApiUrl(template)) return null;
-        return template.replace("%name%", URLEncoder.encode(playerName, StandardCharsets.UTF_8));
+        try {
+            return template.replace("%name%", URLEncoder.encode(playerName, "UTF-8"));
+        } catch (java.io.UnsupportedEncodingException e) {
+            return null;
+        }
+    }
+
+    private static CompletableFuture<MinecraftProfileTexture> completed(MinecraftProfileTexture texture) {
+        return CompletableFuture.completedFuture(texture);
     }
 }
