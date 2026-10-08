@@ -79,7 +79,7 @@ public class SkinPreviewScreen extends Screen {
         }
         infoY = this.infoLine(stack, new TranslatableComponent("wskinloader.preview.skin")
                 .append(new TranslatableComponent(
-                        this.skinTexture != null || (this.playerUuid != null && SkinCache.getSkin(this.playerUuid) != null)
+                        this.skinTexture != null || (this.playerUuid != null && SkinCache.getCachedSkin(this.playerUuid) != null)
                                 ? "wskinloader.preview.skin_loaded" : "wskinloader.preview.skin_not_loaded")), infoX, infoY);
         infoY += 8;
         infoY = this.infoLine(stack, new TranslatableComponent("wskinloader.preview.controls_title"), infoX, infoY);
@@ -118,12 +118,12 @@ public class SkinPreviewScreen extends Screen {
         ResourceLocation savedCape = SkinCache.getCape(id);
         String savedModel = SkinCache.getModel(id);
 
-        ResourceLocation skinToUse = this.skinTexture;
-        if (skinToUse == null && this.playerUuid != null) {
-            skinToUse = SkinCache.getSkin(this.playerUuid);
+        ResourceLocation skinToUse = this.playerUuid != null ? SkinCache.getCachedSkin(this.playerUuid) : null;
+        if (skinToUse == null) {
+            skinToUse = this.skinTexture;
         }
-        ResourceLocation capeToUse = this.playerUuid != null ? SkinCache.getCape(this.playerUuid) : null;
-        String modelToUse = this.playerUuid != null ? SkinCache.getModel(this.playerUuid) : null;
+        ResourceLocation capeToUse = this.playerUuid != null ? SkinCache.getCachedCape(this.playerUuid) : null;
+        String modelToUse = this.playerUuid != null ? SkinCache.getCachedModel(this.playerUuid) : null;
 
         try {
             if (skinToUse != null) {
@@ -257,7 +257,7 @@ public class SkinPreviewScreen extends Screen {
         // 1.16.5 routes drags to the screen only while a button is held; the
         // delta args are already the per-frame GUI movement.
         if (this.dragging && button == 0) {
-            this.rotationX += (float) deltaX * 1.5F;
+            this.rotationX -= (float) deltaX * 1.5F;
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);

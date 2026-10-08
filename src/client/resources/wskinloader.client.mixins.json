@@ -5,7 +5,9 @@
   "compatibilityLevel": "JAVA_8",
   "client": [
     "AbstractClientPlayerEntityMixin",
+    "HttpTextureMixin",
     "LivingEntityRendererMixin",
+    "PlayerInfoMixin",
     "PlayerListHudMixin",
     "PlayerTabOverlaySkinMixin",
     "PlayerSkinProviderAccessor",

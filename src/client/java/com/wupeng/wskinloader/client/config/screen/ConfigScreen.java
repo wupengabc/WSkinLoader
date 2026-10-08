@@ -71,6 +71,9 @@ public class ConfigScreen extends Screen {
     private PageList pageList;
     private final List<AbstractSelectionList<?>> rowLists = new ArrayList<>();
     private boolean needsRefresh = false;
+    private final java.util.Map<UUID, String> displayedCacheState = new java.util.HashMap<>();
+    private int cacheRefreshTicks;
+    private double cacheScroll = -1;
 
     public ConfigScreen(Screen parent) {
         super(new TranslatableComponent("wskinloader.config.title"));
@@ -112,9 +115,23 @@ public class ConfigScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        if (this.selectedTab == 4 && ++this.cacheRefreshTicks % 20 == 0) {
+            java.util.Map<UUID, String> names = new java.util.HashMap<>();
+            for (UUID uuid : SkinCache.getCachedPlayers()) {
+                names.put(uuid, this.cacheDisplayState(uuid));
+            }
+            if (!names.equals(this.displayedCacheState)) {
+                this.cacheScroll = this.rowLists.isEmpty() ? 0 : this.rowLists.get(0).getScrollAmount();
+                this.needsRefresh = true;
+            }
+        }
         if (this.needsRefresh && this.minecraft != null) {
             this.needsRefresh = false;
             this.init(this.minecraft, this.width, this.height);
+            if (this.selectedTab == 4 && this.cacheScroll >= 0 && !this.rowLists.isEmpty()) {
+                this.rowLists.get(0).setScrollAmount(this.cacheScroll);
+            }
+            this.cacheScroll = -1;
         }
     }
 
@@ -690,6 +707,10 @@ public class ConfigScreen extends Screen {
 
     private void buildCacheTab() {
         List<UUID> cachedPlayers = new ArrayList<>(SkinCache.getCachedPlayers());
+        this.displayedCacheState.clear();
+        for (UUID uuid : cachedPlayers) {
+            this.displayedCacheState.put(uuid, this.cacheDisplayState(uuid));
+        }
 
         RowList list = this.newRowList(0);
         Button clearAll = new Button(0, 0, 140, BUTTON_HEIGHT,
@@ -714,6 +735,9 @@ public class ConfigScreen extends Screen {
                 resolvedName = uuid.toString().substring(0, 8) + "...";
             }
             String resolvedSource = PlayerSkinSourceCache.getSource(uuid);
+            if (SkinCache.getSkin(uuid) == null && SkinCache.getCachedSkin(uuid) != null) {
+                resolvedSource = "正版";
+            }
             if (resolvedSource == null) {
                 resolvedSource = "unknown";
             }
@@ -724,7 +748,7 @@ public class ConfigScreen extends Screen {
                     new TranslatableComponent("wskinloader.config.button.preview"), b -> {
                         if (this.minecraft != null) {
                             this.minecraft.setScreen(new SkinPreviewScreen(this, displayName, playerId,
-                                    SkinCache.getSkin(playerId)));
+                                    SkinCache.getCachedSkin(playerId)));
                         }
                     });
             Button delete = new Button(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT,
@@ -739,6 +763,11 @@ public class ConfigScreen extends Screen {
                     new TextComponent("[" + resolvedSource + "] " + uuid.toString().substring(0, 13) + "..."),
                     controls));
         }
+    }
+
+    private String cacheDisplayState(UUID uuid) {
+        return PlayerNameCache.getName(uuid) + "\u0000" + PlayerSkinSourceCache.getSource(uuid)
+                + "\u0000" + SkinCache.getCachedSkin(uuid);
     }
 
     private Row booleanRow(String labelKey, String descKey, boolean initial,

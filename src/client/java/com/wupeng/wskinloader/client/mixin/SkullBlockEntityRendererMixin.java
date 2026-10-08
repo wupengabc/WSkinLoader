@@ -2,7 +2,6 @@ package com.wupeng.wskinloader.client.mixin;
 
 import com.mojang.authlib.GameProfile;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.wupeng.wskinloader.client.skin.SkinCache;
 import com.wupeng.wskinloader.client.skin.SkinLoader;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.blockentity.SkullBlockRenderer;
@@ -35,8 +34,6 @@ public abstract class SkullBlockEntityRendererMixin {
         if (owner == null || owner.getId() == null) {
             return;
         }
-        if (SkinCache.getSkin(owner.getId()) == null) {
-            SkinLoader.loadSkinForProfile(owner);
-        }
+        SkinLoader.loadSkinForProfile(owner);
     }
 }
