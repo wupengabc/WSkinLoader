@@ -2,8 +2,8 @@ package com.wupeng.wskinloader.client.skin;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -14,7 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class MojangSessionApi {
-    private static final Logger LOGGER = LoggerFactory.getLogger("WSkinLoader");
+    private static final Logger LOGGER = LogManager.getLogger("WSkinLoader");
     private static final String SESSION_SERVER = "https://sessionserver.mojang.com/session/minecraft/profile/";
     private static final Gson GSON = new Gson();
     
@@ -79,8 +79,8 @@ public class MojangSessionApi {
             
             if (responseCode != 200) {
                 LOGGER.warn("无法获取玩家 {} 的纹理数据: HTTP {}", uuid, responseCode);
-                try (var errorStream = connection.getErrorStream()) {
-                    if (errorStream != null) errorStream.readAllBytes();
+                try (java.io.InputStream errorStream = connection.getErrorStream()) {
+                    if (errorStream != null) com.google.common.io.ByteStreams.toByteArray(errorStream);
                 }
                 FAILURE_CACHE.put(uuid, System.currentTimeMillis());
                 return null;
@@ -88,8 +88,8 @@ public class MojangSessionApi {
             
             // 读取响应
             String response;
-            try (var stream = connection.getInputStream()) {
-                response = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            try (java.io.InputStream stream = connection.getInputStream()) {
+                response = new String(com.google.common.io.ByteStreams.toByteArray(stream), StandardCharsets.UTF_8);
             }
             JsonObject json = GSON.fromJson(response, JsonObject.class);
             if (json == null) {
