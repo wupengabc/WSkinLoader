@@ -2,6 +2,7 @@ package com.wupeng.wskinloader.client.skin;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.wupeng.wskinloader.client.util.BoundedCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -9,19 +10,19 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class MojangSessionApi {
     private static final Logger LOGGER = LoggerFactory.getLogger("WSkinLoader");
     private static final String SESSION_SERVER = "https://sessionserver.mojang.com/session/minecraft/profile/";
     private static final Gson GSON = new Gson();
-    
-    // 缓存查询结果，避免频繁请求
-    private static final Map<UUID, ProfileTextures> CACHE = new ConcurrentHashMap<>();
-    private static final Map<UUID, Long> LAST_QUERY_TIME = new ConcurrentHashMap<>();
-    private static final Map<UUID, Long> FAILURE_CACHE = new ConcurrentHashMap<>();
+
+    // 使用有界缓存，避免内存无限增长
+    private static final Map<UUID, ProfileTextures> CACHE = Collections.synchronizedMap(new BoundedCache<>(1000));
+    private static final Map<UUID, Long> LAST_QUERY_TIME = Collections.synchronizedMap(new BoundedCache<>(1000));
+    private static final Map<UUID, Long> FAILURE_CACHE = Collections.synchronizedMap(new BoundedCache<>(500));
     private static final long CACHE_DURATION = 60000; // 1分钟缓存
     private static final long FAILURE_CACHE_DURATION = 30000L;
     
@@ -69,19 +70,19 @@ public class MojangSessionApi {
                 connection.setRequestMethod("GET");
                 connection.setConnectTimeout(5000);
                 connection.setReadTimeout(5000);
+                connection.setInstanceFollowRedirects(false);
                 int responseCode = connection.getResponseCode();
             
             if (responseCode == 204) {
                 // 204 No Content - 玩家没有皮肤数据
-                FAILURE_CACHE.put(uuid, System.currentTimeMillis());
-                return null;
+                ProfileTextures empty = new ProfileTextures(null, null, false);
+                CACHE.put(uuid, empty);
+                LAST_QUERY_TIME.put(uuid, System.currentTimeMillis());
+                return empty;
             }
             
             if (responseCode != 200) {
                 LOGGER.warn("无法获取玩家 {} 的纹理数据: HTTP {}", uuid, responseCode);
-                try (var errorStream = connection.getErrorStream()) {
-                    if (errorStream != null) errorStream.readAllBytes();
-                }
                 FAILURE_CACHE.put(uuid, System.currentTimeMillis());
                 return null;
             }
@@ -89,70 +90,11 @@ public class MojangSessionApi {
             // 读取响应
             String response;
             try (var stream = connection.getInputStream()) {
-                response = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                byte[] bytes = stream.readNBytes(65537);
+                if (bytes.length > 65536) throw new java.io.IOException("Texture response too large");
+                response = new String(bytes, StandardCharsets.UTF_8);
             }
-            JsonObject json = GSON.fromJson(response, JsonObject.class);
-            if (json == null) {
-                throw new IllegalArgumentException("Session Server 返回了无效 JSON");
-            }
-            
-            // 解析 properties
-            if (!json.has("properties") || json.getAsJsonArray("properties").size() == 0) {
-                FAILURE_CACHE.put(uuid, System.currentTimeMillis());
-                return null;
-            }
-            
-            JsonObject properties = json.getAsJsonArray("properties").get(0).getAsJsonObject();
-            if (!properties.has("value")) {
-                throw new IllegalArgumentException("纹理属性缺少 value");
-            }
-            String value = properties.get("value").getAsString();
-            
-            // Base64 解码
-            String decodedValue = new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
-            JsonObject texturesJson = GSON.fromJson(decodedValue, JsonObject.class);
-            if (texturesJson == null) {
-                throw new IllegalArgumentException("纹理属性不是有效 JSON");
-            }
-            
-            // 解析纹理
-            String skinUrl = null;
-            String capeUrl = null;
-            boolean isSlim = false;
-            
-            if (texturesJson.has("textures")) {
-                JsonObject textures = texturesJson.getAsJsonObject("textures");
-                
-                // 皮肤
-                if (textures.has("SKIN")) {
-                    JsonObject skin = textures.getAsJsonObject("SKIN");
-                    skinUrl = skin.get("url").getAsString();
-                    
-                    // 检查模型类型
-                    if (skin.has("metadata")) {
-                        JsonObject metadata = skin.getAsJsonObject("metadata");
-                        if (metadata.has("model")) {
-                            String model = metadata.get("model").getAsString();
-                            isSlim = "slim".equalsIgnoreCase(model);
-                        }
-                    }
-                    // 如果没有 metadata，默认为 wide (Steve)
-                }
-                
-                // 披风
-                if (textures.has("CAPE")) {
-                    JsonObject cape = textures.getAsJsonObject("CAPE");
-                    capeUrl = cape.get("url").getAsString();
-                }
-            }
-            
-            // 如果没有皮肤 URL，返回 null
-            if (skinUrl == null && capeUrl == null) {
-                FAILURE_CACHE.put(uuid, System.currentTimeMillis());
-                return null;
-            }
-            
-            ProfileTextures result = new ProfileTextures(skinUrl, capeUrl, isSlim);
+            ProfileTextures result = parseProfileTextures(response);
             
             // 缓存结果
             CACHE.put(uuid, result);
@@ -163,11 +105,86 @@ public class MojangSessionApi {
             } finally {
                 connection.disconnect();
             }
+        } catch (java.io.IOException e) {
+            LOGGER.warn("无法获取玩家 {} 的纹理数据（网络错误）: {}", uuid, e.getMessage());
+            LOGGER.debug("详细错误信息", e);
+            FAILURE_CACHE.put(uuid, System.currentTimeMillis());
+            return null;
         } catch (Exception e) {
-            LOGGER.error("获取玩家 {} 的纹理数据时出错: {}", uuid, e.getMessage());
+            LOGGER.error("获取玩家 {} 的纹理数据时发生意外错误", uuid, e);
             FAILURE_CACHE.put(uuid, System.currentTimeMillis());
             return null;
         }
+    }
+
+    static ProfileTextures parseProfileTextures(String response) {
+        JsonObject json = GSON.fromJson(response, JsonObject.class);
+        if (json == null) {
+            throw new IllegalArgumentException("Session Server 返回了无效 JSON");
+        }
+        if (!json.has("properties")) {
+            return new ProfileTextures(null, null, false);
+        }
+
+        if (!json.get("properties").isJsonArray()) {
+            throw new IllegalArgumentException("纹理属性不是数组");
+        }
+        JsonObject properties = null;
+        for (var element : json.getAsJsonArray("properties")) {
+            if (!element.isJsonObject()) {
+                throw new IllegalArgumentException("纹理属性不是对象");
+            }
+            JsonObject property = element.getAsJsonObject();
+            if (!property.has("name") || !property.get("name").isJsonPrimitive()
+                    || !property.get("name").getAsJsonPrimitive().isString() || !property.has("value")) {
+                throw new IllegalArgumentException("纹理属性缺少 name 或 value");
+            }
+            if ("textures".equals(property.get("name").getAsString())) {
+                properties = property;
+                break;
+            }
+        }
+        if (properties == null) {
+            return new ProfileTextures(null, null, false);
+        }
+        String decodedValue;
+        try {
+            decodedValue = new String(Base64.getDecoder().decode(properties.get("value").getAsString()), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("纹理属性不是有效 Base64", e);
+        }
+        JsonObject texturesJson = GSON.fromJson(decodedValue, JsonObject.class);
+        if (texturesJson == null) {
+            throw new IllegalArgumentException("纹理属性不是有效 JSON");
+        }
+
+        String skinUrl = null;
+        String capeUrl = null;
+        boolean isSlim = false;
+        if (texturesJson.has("textures")) {
+            if (!texturesJson.get("textures").isJsonObject()) {
+                throw new IllegalArgumentException("纹理数据不是对象");
+            }
+            JsonObject textures = texturesJson.getAsJsonObject("textures");
+            if (textures.has("SKIN")) {
+                JsonObject skin = textures.getAsJsonObject("SKIN");
+                if (!skin.has("url")) {
+                    throw new IllegalArgumentException("皮肤纹理缺少 url");
+                }
+                skinUrl = skin.get("url").getAsString();
+                if (skin.has("metadata") && skin.getAsJsonObject("metadata").has("model")) {
+                    isSlim = "slim".equalsIgnoreCase(skin.getAsJsonObject("metadata").get("model").getAsString());
+                }
+            }
+            if (textures.has("CAPE")) {
+                JsonObject cape = textures.getAsJsonObject("CAPE");
+                if (!cape.has("url")) {
+                    throw new IllegalArgumentException("披风纹理缺少 url");
+                }
+                capeUrl = cape.get("url").getAsString();
+            }
+        }
+        return new ProfileTextures(skinUrl, capeUrl, isSlim);
     }
     
     public static void clearCache() {

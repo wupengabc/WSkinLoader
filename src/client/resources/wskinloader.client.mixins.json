@@ -8,10 +8,11 @@
     "LivingEntityRendererMixin",
     "PlayerFaceExtractorMixin",
     "PlayerListHudMixin",
-    "PlayerTabOverlaySkinMixin",
     "PlayerSkinCacheEntryMixin",
     "PlayerSkinProviderAccessor",
     "PlayerSkinProviderMixin",
+    "PlayerTabOverlaySkinMixin",
+    "SkinTextureDownloaderAccessor",
     "SkullBlockEntityRendererMixin"
   ],
   "injectors": {

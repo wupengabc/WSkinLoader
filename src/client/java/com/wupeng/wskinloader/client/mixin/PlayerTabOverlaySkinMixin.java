@@ -3,6 +3,7 @@ package com.wupeng.wskinloader.client.mixin;
 import com.wupeng.wskinloader.client.SuppressedHeadState;
 import com.wupeng.wskinloader.client.config.ModConfig;
 import com.wupeng.wskinloader.client.skin.SkinCache;
+import com.wupeng.wskinloader.client.skin.SkinLoader;
 import com.wupeng.wskinloader.client.util.ComponentFaceDetector;
 import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.multiplayer.PlayerInfo;
@@ -48,6 +49,7 @@ public abstract class PlayerTabOverlaySkinMixin {
         }
 
         UUID uuid = info.getProfile().id();
+        SkinLoader.ensureLoaded(info.getProfile());
         ClientAsset.Texture customSkin = SkinCache.getSkin(uuid);
         boolean duplicate = config.skipDuplicateTabHead
                 && ComponentFaceDetector.containsPlayerFace(ComponentFaceDetector.renderableTabName(info));

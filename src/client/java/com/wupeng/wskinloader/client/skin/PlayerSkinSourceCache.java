@@ -2,13 +2,14 @@ package com.wupeng.wskinloader.client.skin;
 
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import com.wupeng.wskinloader.client.util.BoundedCache;
+import java.util.Collections;
 
 /**
  * 缓存每个玩家的皮肤来源信息（用于在名称标签旁显示）
  */
 public class PlayerSkinSourceCache {
-    private static final Map<UUID, String> SKIN_SOURCE = new ConcurrentHashMap<>();
+    private static final Map<UUID, String> SKIN_SOURCE = Collections.synchronizedMap(new BoundedCache<>(4096));
     
     /**
      * 设置玩家的皮肤来源标签

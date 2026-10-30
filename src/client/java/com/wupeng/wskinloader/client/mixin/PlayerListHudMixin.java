@@ -2,11 +2,11 @@ package com.wupeng.wskinloader.client.mixin;
 
 import com.wupeng.wskinloader.client.config.ModConfig;
 import com.wupeng.wskinloader.client.util.ComponentFaceDetector;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
@@ -40,7 +40,7 @@ public abstract class PlayerListHudMixin {
         if (!config.enableTabListHeads) {
             return instance.onlineMode();
         }
-        if (config.skipDuplicateTabHead && wskinloader$allNamesHaveServerFaces()) {
+        if (config.skipDuplicateTabHead && wskinloader$allNamesHaveServerFaces(instance)) {
             return false;
         }
         return true;
@@ -54,7 +54,8 @@ public abstract class PlayerListHudMixin {
      * 短暂翻转为 false，导致原版头像槽位宽度和绘制闪现一下又消失。
      * 锁存后本帧检测完全跳过，也无后续逐帧开销。
      */
-    private static boolean wskinloader$facesLatched;
+    @Unique private static boolean wskinloader$facesLatched;
+    @Unique private static ClientPacketListener wskinloader$facesConnection;
 
     /**
      * 判断是否所有 Tab 列表实际显示的玩家（listed）渲染名都含有皮肤头像字形。
@@ -62,8 +63,12 @@ public abstract class PlayerListHudMixin {
      * <p>使用与原版 {@code getPlayerInfos()} 相同的 {@code getListedOnlinePlayers()}
      * 来源，避免未列出玩家影响判定。
      */
-    private static boolean wskinloader$allNamesHaveServerFaces() {
-        ClientPacketListener connection = Minecraft.getInstance().getConnection();
+    @Unique
+    private static boolean wskinloader$allNamesHaveServerFaces(ClientPacketListener connection) {
+        if (connection != wskinloader$facesConnection) {
+            wskinloader$facesConnection = connection;
+            wskinloader$facesLatched = false;
+        }
         if (connection == null) {
             wskinloader$facesLatched = false;
             return false;

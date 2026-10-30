@@ -1,5 +1,10 @@
 # WSkinLoader
 
+[![GitHub License](https://img.shields.io/github/license/wupengabc/wskinloader)](LICENSE.txt)
+[![GitHub Release](https://img.shields.io/github/v/release/wupengabc/wskinloader)](https://github.com/wupengabc/wskinloader/releases)
+[![GitHub Issues](https://img.shields.io/github/issues/wupengabc/wskinloader)](https://github.com/wupengabc/wskinloader/issues)
+[![CI](https://img.shields.io/github/actions/workflow/status/wupengabc/wskinloader/ci.yml?branch=master&label=CI)](https://github.com/wupengabc/wskinloader/actions)
+
 **English** | [中文](#中文)
 
 A **client-side Minecraft Fabric mod** that loads skins and capes from **custom APIs (LittleSkin, Blessing Skin, etc.)** for offline players, while **premium players keep their official Mojang textures**. Includes player-to-player texture mapping, a vanilla-style in-game config screen, and a 3D skin preview.
@@ -344,8 +349,69 @@ or in the config file:
 
 ---
 
+## 常见问题 (FAQ)
+
+### 为什么我的皮肤没有显示？
+
+1. 检查配置文件中的 API URL 是否正确
+2. 检查玩家名是否正确
+3. 查看日志文件 `.minecraft/logs/latest.log` 中的错误信息
+4. 确保自定义 API 服务器可访问
+
+### 如何切换到只使用自定义 API？
+
+在配置文件中设置：
+```json
+"premiumFirst": false
+```
+
+### 如何清除缓存？
+
+1. 游戏内：打开配置界面 → 缓存标签 → 清除全部
+2. 手动：删除 `.minecraft/cache/wskinloader/` 目录
+
+### 性能问题怎么办？
+
+- 皮肤会被缓存，首次加载后应该很快
+- 如果遇到卡顿，尝试减少 API 数量
+- 检查网络连接是否稳定
+
+## 故障排除
+
+### 日志中显示 "无法获取玩家纹理数据"
+
+- 可能是 Mojang 服务器暂时不可用
+- 检查网络连接
+- 如果是正版玩家，可以启用 `keepPremiumWhenUnavailable` 避免回退
+
+### 配置文件损坏
+
+- 删除 `.minecraft/config/wskinloader.json`
+- 重启游戏，会自动生成新的配置文件
+
+### 与其他模组冲突
+
+- 查看日志中的错误信息
+- 在 GitHub Issues 中报告，附上模组列表
+
+## 贡献
+
+欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
+
+## 相关文档
+
+- [架构设计](ARCHITECTURE.md)
+- [更新日志](CHANGELOG.md)
+- [贡献指南](CONTRIBUTING.md)
+
 ## 许可证
 
 本项目代码采用 **All-Rights-Reserved（保留所有权利）** 许可发布。详情见 [LICENSE.txt](LICENSE.txt)。
 
+## 联系方式
+
 问题反馈：[GitHub Issues](https://github.com/wupengabc/wskinloader/issues)
+
+---
+
+**致谢**: 感谢所有为本项目做出贡献的开发者和用户！

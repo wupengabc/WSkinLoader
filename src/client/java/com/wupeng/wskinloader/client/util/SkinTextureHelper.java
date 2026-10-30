@@ -3,6 +3,7 @@ package com.wupeng.wskinloader.client.util;
 import com.wupeng.wskinloader.client.config.ModConfig;
 import com.wupeng.wskinloader.client.skin.PlayerNameCache;
 import com.wupeng.wskinloader.client.skin.SkinCache;
+import com.wupeng.wskinloader.client.skin.SkinLoader;
 import net.minecraft.core.ClientAsset;
 import net.minecraft.world.entity.player.PlayerModelType;
 import net.minecraft.world.entity.player.PlayerSkin;
@@ -26,6 +27,7 @@ public class SkinTextureHelper {
             return null;
         }
         
+        SkinLoader.ensureLoaded(uuid);
         ClientAsset.Texture customSkin = SkinCache.getSkin(uuid);
         ClientAsset.Texture customCape = SkinCache.getCape(uuid);
 

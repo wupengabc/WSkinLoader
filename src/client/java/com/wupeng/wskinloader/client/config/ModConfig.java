@@ -19,12 +19,15 @@ import java.util.concurrent.CompletableFuture;
 public class ModConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("wskinloader");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("wskinloader.json");
+    private static final class ConfigPath {
+        private static final Path VALUE = FabricLoader.getInstance().getConfigDir().resolve("wskinloader.json");
+    }
 
     private static ModConfig INSTANCE;
 
-    /** Guards against concurrent saves; written from the render thread, read from the async thread. */
-    private volatile boolean isSaving = false;
+    private static final Object SAVE_LOCK = new Object();
+    private static long saveRevision;
+    private static long writtenRevision;
 
     // 皮肤API配置列表（URL和别名）
     public List<ApiConfig> skinApis = new ArrayList<>();
@@ -243,12 +246,7 @@ public class ModConfig {
         private static String validateApi(ApiConfig api) {
             if (api == null || api.url == null || api.url.isBlank()) return "API 地址不能为空";
             try {
-                java.net.URI uri = java.net.URI.create(api.url.replace("%name%", "player"));
-                String scheme = uri.getScheme();
-                if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                    return "API 地址只允许使用 HTTP 或 HTTPS";
-                }
-                if (uri.getHost() == null) return "API 地址缺少有效主机名";
+                if (!isAllowedApiUrl(api.url)) return "API 地址无效或指向不允许的主机";
             } catch (IllegalArgumentException e) {
                 return "API 地址格式无效";
             }
@@ -289,9 +287,10 @@ public class ModConfig {
     }
 
     private static ModConfig loadInternal() {
-        if (Files.exists(CONFIG_PATH)) {
+        Path configPath = ConfigPath.VALUE;
+        if (Files.exists(configPath)) {
             try {
-                String json = Files.readString(CONFIG_PATH);
+                String json = Files.readString(configPath);
                 ModConfig config = GSON.fromJson(json, ModConfig.class);
                 if (config != null) {
                     // 向后兼容：确保集合字段不为 null
@@ -377,19 +376,8 @@ public class ModConfig {
     }
 
     public void save() {
-        // 序列化在当前线程进行，保证数据一致性
-        final String json = GSON.toJson(this);
-        
-        // 同步写入文件，确保配置立即持久化
-        // 避免异步写入时游戏退出或后续保存被跳过导致的数据丢失
-        try {
-            Files.createDirectories(CONFIG_PATH.getParent());
-            Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
-            Files.writeString(tempPath, json);
-            moveConfigFile(tempPath);
-            LOGGER.debug("[WSkinLoader] 配置已保存到 {}", CONFIG_PATH);
-        } catch (IOException e) {
-            LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
+        synchronized (SAVE_LOCK) {
+            writeSnapshot(GSON.toJson(this), ++saveRevision);
         }
     }
     
@@ -397,22 +385,27 @@ public class ModConfig {
      * 异步保存配置（用于频繁调用的场景，如运行时自动保存）
      */
     public void saveAsync() {
-        if (isSaving) return;
-        isSaving = true;
-        final String json = GSON.toJson(this);
-        CompletableFuture.runAsync(() -> {
+        synchronized (SAVE_LOCK) {
+            String json = GSON.toJson(this);
+            long revision = ++saveRevision;
+            CompletableFuture.runAsync(() -> writeSnapshot(json, revision));
+        }
+    }
+
+    private static void writeSnapshot(String json, long revision) {
+        synchronized (SAVE_LOCK) {
+            if (revision < writtenRevision) return;
+            Path configPath = ConfigPath.VALUE;
             try {
-                Files.createDirectories(CONFIG_PATH.getParent());
-                Path tempPath = CONFIG_PATH.resolveSibling(CONFIG_PATH.getFileName() + ".tmp");
+                Files.createDirectories(configPath.getParent());
+                Path tempPath = configPath.resolveSibling(configPath.getFileName() + ".tmp");
                 Files.writeString(tempPath, json);
                 moveConfigFile(tempPath);
-                LOGGER.debug("[WSkinLoader] 配置已异步保存到 {}", CONFIG_PATH);
+                writtenRevision = revision;
             } catch (IOException e) {
-                LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", CONFIG_PATH, e);
-            } finally {
-                isSaving = false;
+                LOGGER.error("[WSkinLoader] 保存配置文件失败: {}", configPath, e);
             }
-        });
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -507,9 +500,9 @@ public class ModConfig {
 
     private static void moveConfigFile(Path tempPath) throws IOException {
         try {
-            Files.move(tempPath, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(tempPath, ConfigPath.VALUE, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-            Files.move(tempPath, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(tempPath, ConfigPath.VALUE, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -518,10 +511,65 @@ public class ModConfig {
         try {
             java.net.URI uri = java.net.URI.create(value.replace("%name%", "player"));
             String scheme = uri.getScheme();
-            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
-                    && uri.getHost() != null;
-        } catch (IllegalArgumentException e) {
+            String host = uri.getHost();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                return false;
+            }
+            if (host == null || host.isBlank() || uri.getRawUserInfo() != null || uri.getRawFragment() != null) {
+                return false;
+            }
+            int port = uri.getPort();
+            if (port != -1 && (port < 1 || port > 65535)) return false;
+            if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
+            if (host.equalsIgnoreCase("localhost") || host.endsWith(".localhost") || host.endsWith(".local")) return false;
+            if (isIpLiteral(host)) {
+                for (java.net.InetAddress address : java.net.InetAddress.getAllByName(host)) {
+                    if (!isPublicAddress(address.getAddress())) return false;
+                }
+            }
+            return true;
+        } catch (IllegalArgumentException | java.io.IOException e) {
             return false;
         }
+    }
+
+    public static boolean isPublicAddress(byte[] bytes) {
+        if (bytes.length == 4) {
+            int a = bytes[0] & 255, b = bytes[1] & 255;
+            return !(a == 0 || a == 10 || a == 127 || (a == 169 && b == 254)
+                    || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168)
+                    || (a == 100 && b >= 64 && b <= 127) || (a == 192 && b == 0)
+                    || (a == 198 && (b == 18 || b == 19)) || a >= 224);
+        }
+        if (bytes.length != 16) return false;
+        // The well-known NAT64 prefix is safe only when its embedded IPv4 is public.
+        if (bytes[0] == 0 && bytes[1] == 0x64 && bytes[2] == (byte) 0xFF && bytes[3] == (byte) 0x9B) {
+            for (int i = 4; i < 12; i++) if (bytes[i] != 0) return false;
+            return isPublicAddress(java.util.Arrays.copyOfRange(bytes, 12, 16));
+        }
+        boolean allZero = true;
+        for (byte value : bytes) allZero &= value == 0;
+        if (allZero || bytes[15] == 1 && allZeroExceptLoopbackPrefix(bytes)) return false;
+        int first = bytes[0] & 255, second = bytes[1] & 255;
+        if ((first & 0xFE) == 0xFC || (first == 0xFE && (second & 0xC0) == 0x80)
+                || first == 0xFF || (first == 0x20 && second == 0x01 && (bytes[2] & 255) == 0x0D && bytes[3] == 0xB8)
+                || first == 0 || (first == 0x20 && second == 0x01 && (bytes[2] & 255) == 0 && (bytes[3] & 255) == 0)) return false;
+        boolean mapped = true;
+        for (int i = 0; i < 10; i++) mapped &= bytes[i] == 0;
+        mapped &= bytes[10] == (byte) 0xFF && bytes[11] == (byte) 0xFF;
+        if (mapped) return isPublicAddress(java.util.Arrays.copyOfRange(bytes, 12, 16));
+        // Exclude transition/tunneling and special-use prefixes, matching DNS checks.
+        return (first & 0xE0) == 0x20 && !(first == 0x20 && second == 0x02)
+                && !(first == 0x20 && second == 0x01
+                && ((bytes[2] & 255) == 0 || (bytes[2] & 255) == 1 || (bytes[2] & 255) == 0x0D));
+    }
+
+    private static boolean allZeroExceptLoopbackPrefix(byte[] bytes) {
+        for (int i = 0; i < 15; i++) if (bytes[i] != 0) return false;
+        return true;
+    }
+
+    private static boolean isIpLiteral(String host) {
+        return host.indexOf(':') >= 0 || host.matches("[0-9.]+");
     }
 }

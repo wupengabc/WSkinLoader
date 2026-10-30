@@ -3,10 +3,11 @@ package com.wupeng.wskinloader.client.skin;
 import com.mojang.authlib.GameProfile;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import com.wupeng.wskinloader.client.util.BoundedCache;
+import java.util.Collections;
 
 public class PlayerNameCache {
-    private static final Map<UUID, String> UUID_TO_NAME = new ConcurrentHashMap<>();
+    private static final Map<UUID, String> UUID_TO_NAME = Collections.synchronizedMap(new BoundedCache<>(8192));
     
     public static void cache(GameProfile profile) {
         if (profile != null && profile.id() != null && profile.name() != null) {
@@ -29,7 +30,9 @@ public class PlayerNameCache {
 
     /** Snapshot of all known uuid to name mappings, used when reloading every player. */
     public static Map<UUID, String> snapshot() {
-        return new java.util.HashMap<>(UUID_TO_NAME);
+        synchronized (UUID_TO_NAME) {
+            return new java.util.HashMap<>(UUID_TO_NAME);
+        }
     }
     
     /**

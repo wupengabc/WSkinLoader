@@ -86,7 +86,7 @@ public abstract class PlayerSkinCacheEntryMixin {
 
     @Inject(method = "renderType", at = @At("HEAD"), cancellable = true)
     private void onRenderType(CallbackInfoReturnable<RenderType> cir) {
-        if (wskinloader$resolveCustomSkin() != null && wskinloader$refreshMemoizedSkin()) {
+        if (wskinloader$refreshMemoizedSkin() && this.itemRenderType == null) {
             this.itemRenderType = SkullBlockRenderer.getPlayerSkinRenderType(this.wskinloader$memorizedSkin.texturePath());
         }
     }
@@ -97,7 +97,7 @@ public abstract class PlayerSkinCacheEntryMixin {
      */
     @Inject(method = "glyphRenderTypes", at = @At("HEAD"), cancellable = true)
     private void onGlyphRenderTypes(CallbackInfoReturnable<GlyphRenderTypes> cir) {
-        if (wskinloader$resolveCustomSkin() != null && wskinloader$refreshMemoizedSkin()) {
+        if (wskinloader$refreshMemoizedSkin() && this.glyphRenderTypes == null) {
             this.glyphRenderTypes = GlyphRenderTypes.createForColorTexture(this.wskinloader$memorizedSkin.texturePath());
         }
     }
@@ -108,7 +108,7 @@ public abstract class PlayerSkinCacheEntryMixin {
      */
     @Inject(method = "textureView", at = @At("HEAD"), cancellable = true)
     private void onTextureView(CallbackInfoReturnable<com.mojang.renderpearl.api.textures.GpuTextureView> cir) {
-        if (wskinloader$resolveCustomSkin() != null && wskinloader$refreshMemoizedSkin()) {
+        if (wskinloader$refreshMemoizedSkin() && this.textureView == null) {
             Minecraft client = Minecraft.getInstance();
             if (client != null) {
                 this.textureView = client.getTextureManager()
@@ -154,10 +154,11 @@ public abstract class PlayerSkinCacheEntryMixin {
      */
     @Unique
     private PlayerSkin wskinloader$patchSkin(PlayerSkin original) {
+        wskinloader$refreshMemoizedSkin();
         if (original == null || !ModConfig.getInstance().enableChatFaces) {
             return null;
         }
-        ClientAsset.Texture skin = wskinloader$resolveCustomSkin();
+        ClientAsset.Texture skin = this.wskinloader$memorizedSkin;
         ClientAsset.Texture cape = wskinloader$resolveCustomCape();
         if (skin == null && cape == null) {
             return null;
@@ -173,7 +174,6 @@ public abstract class PlayerSkinCacheEntryMixin {
         if (patched.equals(original)) {
             return null;
         }
-        wskinloader$refreshMemoizedSkin();
         return patched;
     }
 
@@ -181,6 +181,9 @@ public abstract class PlayerSkinCacheEntryMixin {
     private ClientAsset.Texture wskinloader$resolveCustomSkin() {
         if (!ModConfig.getInstance().enableChatFaces) {
             return null;
+        }
+        if (this.gameProfile != null && this.gameProfile.id() != null) {
+            SkinLoader.ensureLoaded(this.gameProfile);
         }
         return this.gameProfile != null && this.gameProfile.id() != null
                 ? SkinCache.getSkin(this.gameProfile.id())

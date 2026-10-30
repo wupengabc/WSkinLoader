@@ -3,21 +3,21 @@ package com.wupeng.wskinloader.client.skin;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import com.wupeng.wskinloader.client.config.ModConfig;
+import com.wupeng.wskinloader.client.util.BoundedCache;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.SkinTextureDownloader;
 import net.minecraft.client.resources.SkinManager;
-import net.minecraft.core.ClientAsset;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.PlayerModelType;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.nio.file.Path;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.Map;
 
 /**
@@ -27,38 +27,64 @@ public class SkinLoader {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("wskinloader");
 
-    private static final Set<UUID> LOADING = ConcurrentHashMap.newKeySet();
-    private static final Map<UUID, Long> FAILED = new ConcurrentHashMap<>();
-    private static final Map<UUID, Long> INVALIDATION = new ConcurrentHashMap<>();
+    private static final LoadTracker LOADS = new LoadTracker();
+    private static final ResolutionCache RESOLUTIONS = new ResolutionCache(4096, System::currentTimeMillis);
+    private static final Map<UUID, Boolean> REFRESH = new BoundedCache<>(8192);
+    private static final java.util.LinkedHashMap<UUID, Boolean> RECENT = new java.util.LinkedHashMap<>(16, 0.75f, true);
+    private static final int MAX_CACHED_PLAYERS = 4096;
+    private static boolean stopped;
     private static final long FAILURE_COOLDOWN_MS = 30000L;
-    private static final ExecutorService NETWORK_EXECUTOR = Executors.newFixedThreadPool(4, runnable -> {
+    private static final long MISSING_TEXTURE_TTL_MS = TimeUnit.MINUTES.toMillis(5);
+    private static final ExecutorService NETWORK_EXECUTOR = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(1024), runnable -> {
         Thread thread = new Thread(runnable, "WSkinLoader-Network");
         thread.setDaemon(true);
         return thread;
-    });
+    }, new ThreadPoolExecutor.AbortPolicy());
+
+    private record Load(UUID uuid, long token, ModConfig.ConfigData config, boolean refresh,
+                        java.util.concurrent.atomic.AtomicBoolean degraded) {
+        boolean current() { return LOADS.isCurrent(uuid, token); }
+        boolean publish(Runnable action) { return LOADS.publish(uuid, token, action); }
+    }
     
     public static void loadSkinForProfile(GameProfile profile, SkinTextureDownloader downloader) {
-        if (profile == null || profile.id() == null || profile.name() == null) {
+        if (profile == null || profile.id() == null || profile.name() == null || profile.name().isBlank()) {
             return;
         }
         
         UUID uuid = profile.id();
         String playerName = profile.name();
         
-        if (SkinCache.getSkin(uuid) != null || !LOADING.add(uuid)) {
-            return;
+        final Load load;
+        synchronized (LOADS) {
+            if (stopped) return;
+            RECENT.put(uuid, Boolean.TRUE);
+            while (RECENT.size() > MAX_CACHED_PLAYERS) {
+                UUID eldest = RECENT.keySet().iterator().next();
+                RECENT.remove(eldest);
+                LOADS.invalidate(eldest, () -> {
+                    SkinCache.removePlayer(eldest);
+                    PlayerSkinSourceCache.remove(eldest);
+                    RESOLUTIONS.remove(eldest);
+                    REFRESH.remove(eldest);
+                    SafeTextureDownloader.release(eldest);
+                });
+            }
+            PlayerNameCache.cache(profile);
+            if (RESOLUTIONS.blocksLoad(uuid)) return;
+            long token = LOADS.begin(uuid);
+            if (token < 0) return;
+            try {
+                load = new Load(uuid, token, ModConfig.getInstance().deepCopy(), REFRESH.remove(uuid) != null,
+                        new java.util.concurrent.atomic.AtomicBoolean());
+            } catch (RuntimeException e) {
+                LOADS.finish(uuid, token, () -> RESOLUTIONS.remember(uuid, FAILURE_COOLDOWN_MS));
+                LOGGER.warn("[WSkinLoader] Unable to snapshot skin configuration", e);
+                return;
+            }
         }
-
-        Long failedAt = FAILED.get(uuid);
-        if (failedAt != null && System.currentTimeMillis() - failedAt < FAILURE_COOLDOWN_MS) {
-            LOADING.remove(uuid);
-            return;
-        }
-        
-        PlayerNameCache.cache(profile);
-
-        ModConfig config = ModConfig.getInstance();
-        ModConfig.PlayerOverride override = config.getPlayerOverride(playerName);
+        ModConfig.PlayerOverride override = load.config.playerOverrides.get(playerName);
 
         // Player mapping only changes which name each texture is looked up by; the
         // override rules (skip premium / custom API / index) stay exactly the same.
@@ -68,27 +94,62 @@ public class SkinLoader {
         try {
             CompletableFuture.runAsync(() -> {
             try {
-                CompletableFuture<Void> loadingFuture =
-                        loadResolved(uuid, skinName, capeName, override, downloader);
-
-                loadingFuture.whenComplete((result, throwable) -> {
-                    LOADING.remove(uuid);
-                    if (throwable != null || (SkinCache.getSkin(uuid) == null && SkinCache.getCape(uuid) == null)) {
-                        FAILED.put(uuid, System.currentTimeMillis());
-                    } else {
-                        FAILED.remove(uuid);
-                    }
-                });
+                if (!load.current()) return;
+                loadResolved(load, skinName, capeName, override, downloader)
+                        .whenComplete((result, throwable) -> finish(load, throwable));
                 
             } catch (Exception e) {
-                LOADING.remove(uuid);
-                FAILED.put(uuid, System.currentTimeMillis());
+                finish(load, e);
             }
             }, NETWORK_EXECUTOR);
         } catch (RuntimeException e) {
-            LOADING.remove(uuid);
-            FAILED.put(uuid, System.currentTimeMillis());
+            finish(load, e);
         }
+    }
+
+    private static void finish(Load load, Throwable error) {
+        LOADS.finish(load.uuid, load.token, () -> {
+            if (error != null || load.degraded.get()) {
+                if (load.refresh) REFRESH.put(load.uuid, Boolean.TRUE);
+                RESOLUTIONS.remember(load.uuid, isOverloaded(error) ? 1000L : FAILURE_COOLDOWN_MS);
+                if (error != null) LOGGER.debug("[WSkinLoader] Texture load failed for {}", load.uuid, error);
+            } else {
+                boolean missing = !SkinCache.hasSkin(load.uuid) || !SkinCache.hasCape(load.uuid);
+                RESOLUTIONS.remember(load.uuid, missing ? MISSING_TEXTURE_TTL_MS : Long.MAX_VALUE);
+            }
+        });
+    }
+
+    private static boolean isOverloaded(Throwable error) {
+        while (error != null) {
+            if (error instanceof java.util.concurrent.RejectedExecutionException) return true;
+            error = error.getCause();
+        }
+        return false;
+    }
+
+    /** Keeps rendered players recent and restores evicted entries from global disk cache. */
+    public static void ensureLoaded(UUID uuid) {
+        if (uuid == null) return;
+        synchronized (LOADS) {
+            if (RECENT.containsKey(uuid)) RECENT.get(uuid);
+            if (RESOLUTIONS.blocksLoad(uuid)) return;
+        }
+        String name = PlayerNameCache.getName(uuid);
+        if (name == null) {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft != null && minecraft.getConnection() != null) {
+                var info = minecraft.getConnection().getPlayerInfo(uuid);
+                if (info != null) name = info.getProfile().name();
+            }
+        }
+        triggerLoad(uuid, name);
+    }
+
+    public static void ensureLoaded(GameProfile profile) {
+        if (profile == null) return;
+        PlayerNameCache.cache(profile);
+        ensureLoaded(profile.id());
     }
 
     /** Resolves the player name a texture should be loaded from (player mapping). */
@@ -104,30 +165,52 @@ public class SkinLoader {
     }
 
 
-    public static void clearLoadingState() {
-        LOADING.clear();
-        FAILED.clear();
+    /**
+     * Shuts down the network executor gracefully.
+     * Should be called when the mod is being unloaded.
+     */
+    public static void shutdown() {
+        LOGGER.info("[WSkinLoader] 正在关闭网络线程池...");
+        LOADS.invalidateAll(() -> {
+            stopped = true;
+            SkinCache.clear();
+            SafeTextureDownloader.releaseAll();
+        });
+        SafeTextureDownloader.shutdown();
+        NETWORK_EXECUTOR.shutdown();
+        try {
+            if (!NETWORK_EXECUTOR.awaitTermination(5, TimeUnit.SECONDS)) {
+                LOGGER.warn("[WSkinLoader] 网络线程池未能在5秒内关闭，强制关闭");
+                NETWORK_EXECUTOR.shutdownNow();
+                if (!NETWORK_EXECUTOR.awaitTermination(5, TimeUnit.SECONDS)) {
+                    LOGGER.error("[WSkinLoader] 无法关闭网络线程池");
+                }
+            }
+        } catch (InterruptedException e) {
+            LOGGER.error("[WSkinLoader] 关闭网络线程池时被中断", e);
+            NETWORK_EXECUTOR.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
      * Drops every cached/loading state for one player so the next render fetches
      * the skin again.
      *
-     * <p>The invalidation nonce is part of the texture hash, so a re-fetch also
-     * produces a new texture id and a new cache file. Without it the previous
-     * (possibly stale) texture would be re-registered from the on-disk cache and
-     * the player would keep the old skin.
+     * <p>Only explicit refreshes bypass the global disk cache. Joining a server
+     * does not invalidate cached textures.
      */
     public static void invalidate(UUID uuid) {
         if (uuid == null) {
             return;
         }
-        SkinCache.removePlayer(uuid);
-        PlayerSkinSourceCache.remove(uuid);
-        PlayerNameCache.remove(uuid);
-        FAILED.remove(uuid);
-        LOADING.remove(uuid);
-        INVALIDATION.put(uuid, System.currentTimeMillis());
+        LOADS.invalidate(uuid, () -> {
+            SkinCache.removePlayer(uuid);
+            PlayerSkinSourceCache.remove(uuid);
+            RESOLUTIONS.remove(uuid);
+            REFRESH.put(uuid, Boolean.TRUE);
+            SafeTextureDownloader.release(uuid);
+        });
     }
 
     /**
@@ -144,7 +227,6 @@ public class SkinLoader {
         if (uuid == null) {
             return;
         }
-        // Read the name before invalidate() clears the name cache.
         reload(uuid, PlayerNameCache.getName(uuid));
     }
 
@@ -161,7 +243,7 @@ public class SkinLoader {
     }
 
     public static void invalidateAll() {
-        // Capture names before dropping them so the reload can still be started.
+        // Capture names so historical players can bypass disk cache on their next load.
         // Names come from both the cached textures and the name cache, because a
         // player whose rules previously resolved to nothing has no texture cache
         // entry and would otherwise never be re-resolved.
@@ -170,20 +252,16 @@ public class SkinLoader {
             names.putIfAbsent(id, PlayerNameCache.getName(id));
         }
 
-        SkinCache.clear();
-        PlayerSkinSourceCache.clear();
-        PlayerNameCache.clear();
-        FAILED.clear();
-        LOADING.clear();
-        INVALIDATION.clear();
-        INVALIDATION.put(GLOBAL_INVALIDATION_KEY, System.currentTimeMillis());
+        LOADS.invalidateAll(() -> {
+            SkinCache.clear();
+            PlayerSkinSourceCache.clear();
+            RESOLUTIONS.clear();
+            names.keySet().forEach(uuid -> REFRESH.put(uuid, Boolean.TRUE));
+            SafeTextureDownloader.releaseAll();
+        });
 
-        for (Map.Entry<UUID, String> entry : names.entrySet()) {
-            triggerLoad(entry.getKey(), entry.getValue());
-        }
-
-        // Also re-resolve every player currently in the world, so a changed rule
-        // (e.g. toggling the premium check) refreshes them without a relog.
+        // Reload visible players first; historical global entries reload lazily
+        // when rendered rather than flooding the bounded network queue.
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft != null && minecraft.getConnection() != null) {
             for (com.mojang.authlib.GameProfile profile : minecraft.getConnection().getOnlinePlayers().stream()
@@ -209,9 +287,6 @@ public class SkinLoader {
         }
         loadSkinForProfile(new GameProfile(uuid, name), accessor.getDownloader());
     }
-
-    /** Nonce mixed into texture hashes; changes when a cache entry is dropped. */
-    private static final UUID GLOBAL_INVALIDATION_KEY = new UUID(0L, 0L);
 
     /**
      * SHA-1 of the string, hex encoded.
@@ -242,32 +317,25 @@ public class SkinLoader {
         }
     }
 
-    private static String invalidationNonce(UUID uuid) {
-        Long perPlayer = INVALIDATION.get(uuid);
-        Long global = INVALIDATION.get(GLOBAL_INVALIDATION_KEY);
-        long value = Math.max(perPlayer != null ? perPlayer : 0L, global != null ? global : 0L);
-        return Long.toString(value);
-    }
-
     
     /**
      * Loads skin and cape by their resolved source names, applying the override
      * rules unchanged.
      */
-    private static CompletableFuture<Void> loadResolved(UUID cacheUuid, String skinName, String capeName,
+    private static CompletableFuture<Void> loadResolved(Load load, String skinName, String capeName,
                                                        ModConfig.PlayerOverride override,
                                                        SkinTextureDownloader downloader) {
         boolean skipPremium = override != null && override.skipPremiumCheck;
-        ModConfig config = ModConfig.getInstance();
+        ModConfig.ConfigData config = load.config;
         boolean premiumFirst = config.premiumFirst;
         boolean keepPremium = config.keepPremiumWhenUnavailable;
 
-        CompletableFuture<Void> skinFuture = thisTextureFuture(cacheUuid, skinName,
+        CompletableFuture<Void> skinFuture = thisTextureFuture(load, skinName,
                 override != null && override.skin.useCustomApi,
                 override == null ? -1 : override.skin.apiIndex,
                 skipPremium, premiumFirst, keepPremium, MinecraftProfileTexture.Type.SKIN, downloader);
 
-        CompletableFuture<Void> capeFuture = thisTextureFuture(cacheUuid, capeName,
+        CompletableFuture<Void> capeFuture = thisTextureFuture(load, capeName,
                 override != null && override.cape.useCustomApi,
                 override == null ? -1 : override.cape.apiIndex,
                 skipPremium, premiumFirst, keepPremium, MinecraftProfileTexture.Type.CAPE, downloader);
@@ -290,17 +358,17 @@ public class SkinLoader {
      *       (same {@code apiIndex}) when that account has no such texture.</li>
      * </ul>
      */
-    private static CompletableFuture<Void> thisTextureFuture(UUID cacheUuid, String sourceName,
+    private static CompletableFuture<Void> thisTextureFuture(Load load, String sourceName,
                                                              boolean useCustomApi, int apiIndex,
                                                              boolean skipPremium,
                                                              boolean premiumFirst,
                                                              boolean keepPremiumWhenUnavailable,
-                                                             MinecraftProfileTexture.Type type,
-                                                             SkinTextureDownloader downloader) {
+                                                              MinecraftProfileTexture.Type type,
+                                                              SkinTextureDownloader downloader) {
         if (useCustomApi || skipPremium || !premiumFirst) {
-            return loadCustomTexture(cacheUuid, sourceName, type, apiIndex, downloader);
+            return loadCustomTexture(load, sourceName, type, apiIndex, downloader);
         }
-        return loadPremiumTextureByName(cacheUuid, sourceName, type, apiIndex, keepPremiumWhenUnavailable, downloader);
+        return loadPremiumTextureByName(load, sourceName, type, apiIndex, keepPremiumWhenUnavailable, downloader);
     }
 
     /**
@@ -312,114 +380,80 @@ public class SkinLoader {
      * server cannot be reached, no texture is loaded instead of falling back to a
      * third-party one, so a premium skin is never silently replaced.
      */
-    private static CompletableFuture<Void> loadPremiumTextureByName(UUID cacheUuid, String sourceName,
+    private static CompletableFuture<Void> loadPremiumTextureByName(Load load, String sourceName,
                                                                     MinecraftProfileTexture.Type type,
                                                                     int apiIndex,
                                                                     boolean keepPremiumWhenUnavailable,
                                                                     SkinTextureDownloader downloader) {
-        MojangApiChecker.PlayerProfile profile = MojangApiChecker.getPlayerProfile(sourceName);
-        if (profile == null || !profile.isPremium || profile.uuid == null) {
-            return loadCustomTexture(cacheUuid, sourceName, type, apiIndex, downloader);
-        }
-
-        MojangSessionApi.ProfileTextures textures = MojangSessionApi.getProfileTextures(profile.uuid);
-        if (textures == null) {
-            // Mojang 服务不可用：默认不使用第三方皮肤覆盖正版皮肤
-            if (keepPremiumWhenUnavailable) {
-                return CompletableFuture.completedFuture(null);
-            }
-            return loadCustomTexture(cacheUuid, sourceName, type, apiIndex, downloader);
-        }
-
-        String url = type == MinecraftProfileTexture.Type.SKIN ? textures.skinUrl : textures.capeUrl;
-        if (url == null) {
-            return loadCustomTexture(cacheUuid, sourceName, type, apiIndex, downloader);
-        }
-
-        if (type == MinecraftProfileTexture.Type.SKIN) {
-            SkinCache.cacheModel(cacheUuid, textures.isSlim ? PlayerModelType.SLIM : PlayerModelType.WIDE);
-        }
-        return loadPremiumTexture(cacheUuid, profile.uuid, url, type, downloader);
-    }
-
-    
-    private static CompletableFuture<Void> loadPremiumTexture(UUID cacheUuid, UUID mojangUuid, String url, MinecraftProfileTexture.Type type, SkinTextureDownloader downloader) {
-        String hash = sha1Hex(
-                mojangUuid.toString() + "_premium_" + type.name() + "_" + url + "_" + invalidationNonce(cacheUuid));
-        Identifier textureId = Identifier.withDefaultNamespace((type == MinecraftProfileTexture.Type.SKIN ? "skins/" : "capes/") + hash);
-        Path cachePath = getTextureCachePath(hash, type);
-        
-        return downloader.downloadAndRegisterSkin(textureId, cachePath, url, type == MinecraftProfileTexture.Type.SKIN)
-            .thenAccept(asset -> {
-                if (asset != null) {
-                    if (type == MinecraftProfileTexture.Type.SKIN) {
-                        SkinCache.cacheSkin(cacheUuid, asset);
-                        // 记录为正版皮肤
-                        PlayerSkinSourceCache.setSource(cacheUuid, "正版");
-                    } else {
-                        SkinCache.cacheCape(cacheUuid, asset);
-                    }
-                }
-            });
-    }
-    
-    private static CompletableFuture<Void> loadCustomTexture(UUID uuid, String playerName, MinecraftProfileTexture.Type type, int apiIndex, SkinTextureDownloader downloader) {
-        ModConfig config = ModConfig.getInstance();
-        String apiFingerprint = (type == MinecraftProfileTexture.Type.SKIN ? config.skinApis : config.capeApis).stream()
-            .map(api -> api.url == null ? "" : api.url)
-            .collect(java.util.stream.Collectors.joining("\u0000"));
-        // The source name is part of the key: player mapping loads another
-        // player's texture into this cache entry, so a changed mapping must map
-        // to a different texture id and cache file.
-        String hash = sha1Hex(
-                uuid + "_" + playerName + "_" + type.name() + "_" + apiIndex + "_" + apiFingerprint + "_" + invalidationNonce(uuid));
-        Identifier textureId = Identifier.withDefaultNamespace((type == MinecraftProfileTexture.Type.SKIN ? "skins/" : "capes/") + hash);
-        Path cachePath = getTextureCachePath(hash, type);
-        
-        CompletableFuture<ClientAsset.Texture> future;
-        
-        if (apiIndex >= 0) {
-            future = CustomSkinLoader.loadCustomSkinFromIndex(uuid, playerName, downloader, cachePath, textureId, type, apiIndex);
-        } else {
-            future = CustomSkinLoader.loadCustomSkin(uuid, playerName, downloader, cachePath, textureId, type);
-        }
-        
-        return future.thenAccept(asset -> {
-            if (asset != null) {
-                if (type == MinecraftProfileTexture.Type.SKIN) {
-                    SkinCache.cacheSkin(uuid, asset);
-                    PlayerModelType detected = detectModelFromSkinFile(cachePath);
-                    if (detected != null) {
-                        SkinCache.cacheModel(uuid, detected);
-                    }
-                } else {
-                    SkinCache.cacheCape(uuid, asset);
-                }
-            }
-        });
-    }
-
-    /**
-     * 从下载完成的皮肤文件推断模型类型（宽/窄）。
-     *
-     * <p>自定义 API 不会提供模型元数据，只能按皮肤像素判断：64x64 皮肤里，
-     * 窄臂（slim）模型的第一层臂底面止于 x=49，因此 (50,16) 为全透明；
-     * 宽臂（wide）模型该像素总是被填充。这与主流皮肤加载器的经典判定一致。
-     * 64x32 旧格式不存在窄臂。检测失败时返回 {@code null}，保持原版判定不变。
-     */
-    private static PlayerModelType detectModelFromSkinFile(Path skinFile) {
         try {
-            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(skinFile.toFile());
-            if (image == null || image.getWidth() != 64 || image.getHeight() != 64) {
-                return PlayerModelType.WIDE;
+            var texture = PremiumTextureResolver.resolve(sourceName, type, keepPremiumWhenUnavailable,
+                    MojangApiChecker::getPlayerProfile, MojangSessionApi::getProfileTextures);
+            if (texture == null) return loadCustomTexture(load, sourceName, type, apiIndex, downloader);
+            if (texture.url() == null) {
+                load.degraded.set(true);
+                return loadCustomTexture(load, sourceName, type, apiIndex, downloader);
             }
-            int alpha = image.getRGB(50, 16) >>> 24;
-            return alpha == 0 ? PlayerModelType.SLIM : PlayerModelType.WIDE;
-        } catch (Exception e) {
-            LOGGER.debug("[WSkinLoader] 皮肤模型类型检测失败: {}", skinFile, e);
-            return null;
+            return loadPremiumTexture(load, texture.uuid(), texture.url(), type, downloader,
+                    texture.slim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
+        } catch (java.io.IOException e) {
+            return CompletableFuture.failedFuture(e);
         }
     }
+
+    
+    private static CompletableFuture<Void> loadPremiumTexture(Load load, UUID mojangUuid, String url,
+            MinecraftProfileTexture.Type type, SkinTextureDownloader downloader, PlayerModelType model) {
+        String hash = sha1Hex(
+                mojangUuid.toString() + "_premium_" + type.name() + "_" + url);
+        Identifier textureId = Identifier.fromNamespaceAndPath("wskinloader",
+                (type == MinecraftProfileTexture.Type.SKIN ? "skins/" : "capes/") + load.uuid + "_" + load.token);
+        Path cachePath = getTextureCachePath(hash, type);
+        
+        return SafeTextureDownloader.download(downloader, textureId, cachePath, url,
+                type == MinecraftProfileTexture.Type.SKIN, load.refresh, load::current)
+                .thenCompose(asset -> publishTexture(load, asset, type, model, "正版", downloader));
+    }
+    
+    private static CompletableFuture<Void> loadCustomTexture(Load load, String playerName,
+            MinecraftProfileTexture.Type type, int apiIndex, SkinTextureDownloader downloader) {
+        var apis = type == MinecraftProfileTexture.Type.SKIN ? load.config.skinApis : load.config.capeApis;
+        String hash = sha1Hex(playerName + "_" + type.name());
+        Identifier textureId = Identifier.fromNamespaceAndPath("wskinloader",
+                (type == MinecraftProfileTexture.Type.SKIN ? "skins/" : "capes/") + load.uuid + "_" + load.token);
+        Path cachePath = getTextureCachePath(hash, type);
+
+        return CustomSkinLoader.load(apis, playerName, downloader, cachePath, textureId,
+                type, apiIndex, load.refresh, load::current).thenCompose(result -> result == null
+                ? CompletableFuture.completedFuture(null)
+                : publishTexture(load, result.asset(), type, result.model(), result.sourceAlias(), downloader));
+    }
+
+    private static CompletableFuture<Void> publishTexture(Load load, net.minecraft.core.ClientAsset.Texture asset,
+            MinecraftProfileTexture.Type type, PlayerModelType model, String source, SkinTextureDownloader downloader) {
+        if (asset == null) return CompletableFuture.completedFuture(null);
+        try {
+            return CompletableFuture.runAsync(() -> {
+                boolean accepted = load.publish(() -> {
+                    if (type == MinecraftProfileTexture.Type.SKIN) {
+                        SkinCache.cacheSkin(load.uuid, asset);
+                        if (model != null) SkinCache.cacheModel(load.uuid, model);
+                        PlayerSkinSourceCache.setSource(load.uuid, source);
+                    } else {
+                        SkinCache.cacheCape(load.uuid, asset);
+                    }
+                    SafeTextureDownloader.accept(asset);
+                });
+                if (!accepted) SafeTextureDownloader.discard(asset);
+            }, ((com.wupeng.wskinloader.client.mixin.SkinTextureDownloaderAccessor) downloader).wskinloader$getMainThreadExecutor())
+            .whenComplete((ignored, error) -> {
+                if (error != null) SafeTextureDownloader.discard(asset);
+            });
+        } catch (RuntimeException e) {
+            SafeTextureDownloader.discard(asset);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
     
     private static Path getTextureCachePath(String hash, MinecraftProfileTexture.Type type) {
         String folder = type == MinecraftProfileTexture.Type.SKIN ? "skins" : "capes";

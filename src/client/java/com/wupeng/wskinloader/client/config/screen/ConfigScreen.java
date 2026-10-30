@@ -954,15 +954,17 @@ public class ConfigScreen extends Screen {
         // resolution changed. Display-only toggles must not wipe the cache.
         boolean skinConfigChanged = !sameApis(live.skinApis, this.editData.skinApis)
                 || !sameApis(live.capeApis, this.editData.capeApis)
-                || !sameOverrides(live.playerOverrides, this.editData.playerOverrides);
+                || !sameOverrides(live.playerOverrides, this.editData.playerOverrides)
+                || live.premiumFirst != this.editData.premiumFirst
+                || live.keepPremiumWhenUnavailable != this.editData.keepPremiumWhenUnavailable;
 
         live.applyFrom(this.editData);
         live.save();
 
         if (skinConfigChanged) {
-            SkinLoader.invalidateAll();
             com.wupeng.wskinloader.client.skin.MojangApiChecker.clearCache();
             com.wupeng.wskinloader.client.skin.MojangSessionApi.clearCache();
+            SkinLoader.invalidateAll();
         }
 
         this.dirty = false;

@@ -2,6 +2,7 @@ package com.wupeng.wskinloader.client.skin;
 
 import net.minecraft.core.ClientAsset;
 import net.minecraft.world.entity.player.PlayerModelType;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -48,6 +49,7 @@ public class SkinCache {
      */
     public static void removeSkin(UUID uuid) {
         SKIN_CACHE.remove(uuid);
+        MODEL_CACHE.remove(uuid);
     }
     
     /**
@@ -58,18 +60,21 @@ public class SkinCache {
     }
     
     /**
-     * 删除指定玩家的所有缓存（皮肤和披风）
+     * 删除指定玩家的所有缓存（皮肤、披风和模型）
      */
     public static void removePlayer(UUID uuid) {
-        SKIN_CACHE.remove(uuid);
+        removeSkin(uuid);
         CAPE_CACHE.remove(uuid);
     }
     
     /**
-     * 获取所有已缓存皮肤的玩家 UUID
+     * 获取所有已缓存皮肤、披风或模型的玩家 UUID 快照
      */
     public static Set<UUID> getCachedPlayers() {
-        return SKIN_CACHE.keySet();
+        Set<UUID> players = new HashSet<>(SKIN_CACHE.keySet());
+        players.addAll(CAPE_CACHE.keySet());
+        players.addAll(MODEL_CACHE.keySet());
+        return Set.copyOf(players);
     }
     
     /**
@@ -89,5 +94,6 @@ public class SkinCache {
     public static void clear() {
         SKIN_CACHE.clear();
         CAPE_CACHE.clear();
+        MODEL_CACHE.clear();
     }
 }
